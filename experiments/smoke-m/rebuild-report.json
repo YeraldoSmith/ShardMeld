@@ -1,0 +1,10 @@
+{
+  "output": "<WORKSPACE>/outputs/ShardMeld/experiments/smoke-m/rebuilt-v2.bin",
+  "target_bytes": 16842753,
+  "local_bytes_read": 16361172,
+  "missing_source_bytes_read": 481581,
+  "local_chunk_occurrences": 192,
+  "missing_chunk_occurrences": 6,
+  "output_sha256": "f437a9a4e82b28ff74486d73d0d1814ea7d2a4ee22f81361a2b1ad49dc231881",
+  "verified": true
+}

@@ -1,0 +1,61 @@
+{
+  "target_name": "sqlite-amalgamation-3530400.zip",
+  "target_bytes": 2946650,
+  "target_sha256": "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+  "target_chunks": 7,
+  "matched_chunks": 0,
+  "missing_chunks": 7,
+  "local_reusable_bytes": 0,
+  "missing_payload_bytes": 2946650,
+  "reuse_ratio": 0.0,
+  "index": {
+    "files": 1,
+    "bytes": 2945929,
+    "chunks": 7,
+    "database_bytes": 65536
+  },
+  "plan": [
+    {
+      "offset": 0,
+      "length": 418677,
+      "hash": "0d19f9923472ede07ef81c6f8c57176d59872a1368357c67ce6e17261b5bb810",
+      "local_source": null
+    },
+    {
+      "offset": 418677,
+      "length": 421683,
+      "hash": "506486c64234d0dd8a009a1f9d282e6f18eb076a34a178c378603b6e16cad2ea",
+      "local_source": null
+    },
+    {
+      "offset": 840360,
+      "length": 328081,
+      "hash": "8427183f4572222986930671c53f0b795d92f1e186c11c910b6cce3b93ac1ddf",
+      "local_source": null
+    },
+    {
+      "offset": 1168441,
+      "length": 355414,
+      "hash": "93ace37fbd89ce0664a80322a1430485009df2daa7fcdaf17f4c352105b5acc2",
+      "local_source": null
+    },
+    {
+      "offset": 1523855,
+      "length": 803332,
+      "hash": "44932ffc0da6afe960f66219525c7e61e0d1dbe256b3e853ae2677c36efed92f",
+      "local_source": null
+    },
+    {
+      "offset": 2327187,
+      "length": 228084,
+      "hash": "02845658a7cee8719fec1a0f0f09b101d7a38001a15553e80d7d6a54862987c1",
+      "local_source": null
+    },
+    {
+      "offset": 2555271,
+      "length": 391379,
+      "hash": "5282e31d545418c73f48adee1329fcc1e375481da4b905379b5a9892c5de35a8",
+      "local_source": null
+    }
+  ]
+}

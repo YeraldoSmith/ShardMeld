@@ -1,0 +1,21 @@
+{
+  "report_format": "shardmeld-report",
+  "report_version": 1,
+  "engine_version": "2.0.0",
+  "bind": "127.0.0.1:46005",
+  "index_db": "../../work/qbt-v20-index/materials.db",
+  "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+  "target_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "total_pieces": 37,
+  "advertised_pieces": 37,
+  "advertised_piece_bytes": 9515341,
+  "preflight_locally_covered_bytes": 9515341,
+  "connections": 1,
+  "successful_handshakes": 1,
+  "block_requests": 581,
+  "payload_bytes_sent": 9515341,
+  "on_demand_local_chunks_read": 172,
+  "on_demand_local_bytes_read": 12862697,
+  "cancel_messages_received": 0,
+  "protocol_errors": 0
+}

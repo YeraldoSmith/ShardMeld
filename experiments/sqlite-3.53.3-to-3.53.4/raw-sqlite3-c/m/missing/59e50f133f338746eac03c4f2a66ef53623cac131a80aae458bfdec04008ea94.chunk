@@ -1,0 +1,2573 @@
+    Z = (int)((p->iJD + 43200000)/86400000);
+    alpha = (int)((Z + 32044.75)/36524.25) - 52;
+    A = Z + 1 + alpha - ((alpha+100)/4) + 25;
+    B = A + 1524;
+    C = (int)((B - 122.1)/365.25);
+    D = (36525*(C&32767))/100;
+    E = (int)((B-D)/30.6001);
+    X1 = (int)(30.6001*E);
+    p->D = B - D - X1;
+    p->M = E<14 ? E-1 : E-13;
+    p->Y = p->M>2 ? C - 4716 : C - 4715;
+  }
+  p->validYMD = 1;
+}
+
+/*
+** Compute the Hour, Minute, and Seconds from the julian day number.
+*/
+static void computeHMS(DateTime *p){
+  int day_ms, day_min; /* milliseconds, minutes into the day */
+  if( p->validHMS ) return;
+  computeJD(p);
+  day_ms = (int)((p->iJD + 43200000) % 86400000);
+  p->s = (day_ms % 60000)/1000.0;
+  day_min = day_ms/60000;
+  p->m = day_min % 60;
+  p->h = day_min / 60;
+  p->rawS = 0;
+  p->validHMS = 1;
+}
+
+/*
+** Compute both YMD and HMS
+*/
+static void computeYMD_HMS(DateTime *p){
+  computeYMD(p);
+  computeHMS(p);
+}
+
+/*
+** Clear the YMD and HMS and the TZ
+*/
+static void clearYMD_HMS_TZ(DateTime *p){
+  p->validYMD = 0;
+  p->validHMS = 0;
+  p->tz = 0;
+}
+
+#ifndef SQLITE_OMIT_LOCALTIME
+/*
+** On recent Windows platforms, the localtime_s() function is available
+** as part of the "Secure CRT". It is essentially equivalent to
+** localtime_r() available under most POSIX platforms, except that the
+** order of the parameters is reversed.
+**
+** See http://msdn.microsoft.com/en-us/library/a442x3ye(VS.80).aspx.
+**
+** If the user has not indicated to use localtime_r() or localtime_s()
+** already, check for an MSVC build environment that provides
+** localtime_s().
+*/
+#if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S \
+    && defined(_MSC_VER) && defined(_CRT_INSECURE_DEPRECATE)
+#undef  HAVE_LOCALTIME_S
+#define HAVE_LOCALTIME_S 1
+#endif
+
+/*
+** The following routine implements the rough equivalent of localtime_r()
+** using whatever operating-system specific localtime facility that
+** is available.  This routine returns 0 on success and
+** non-zero on any kind of error.
+**
+** If the sqlite3GlobalConfig.bLocaltimeFault variable is non-zero then this
+** routine will always fail.  If bLocaltimeFault is nonzero and
+** sqlite3GlobalConfig.xAltLocaltime is not NULL, then xAltLocaltime() is
+** invoked in place of the OS-defined localtime() function.
+**
+** EVIDENCE-OF: R-62172-00036 In this implementation, the standard C
+** library function localtime_r() is used to assist in the calculation of
+** local time.
+*/
+static int osLocaltime(time_t *t, struct tm *pTm){
+  int rc;
+#if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S
+  struct tm *pX;
+#if SQLITE_THREADSAFE>0
+  sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN);
+#endif
+  sqlite3_mutex_enter(mutex);
+  pX = localtime(t);
+#ifndef SQLITE_UNTESTABLE
+  if( sqlite3GlobalConfig.bLocaltimeFault ){
+    if( sqlite3GlobalConfig.xAltLocaltime!=0
+     && 0==sqlite3GlobalConfig.xAltLocaltime((const void*)t,(void*)pTm)
+    ){
+      pX = pTm;
+    }else{
+      pX = 0;
+    }
+  }
+#endif
+  if( pX ) *pTm = *pX;
+#if SQLITE_THREADSAFE>0
+  sqlite3_mutex_leave(mutex);
+#endif
+  rc = pX==0;
+#else
+#ifndef SQLITE_UNTESTABLE
+  if( sqlite3GlobalConfig.bLocaltimeFault ){
+    if( sqlite3GlobalConfig.xAltLocaltime!=0 ){
+      return sqlite3GlobalConfig.xAltLocaltime((const void*)t,(void*)pTm);
+    }else{
+      return 1;
+    }
+  }
+#endif
+#if HAVE_LOCALTIME_R
+  rc = localtime_r(t, pTm)==0;
+#else
+  rc = localtime_s(pTm, t);
+#endif /* HAVE_LOCALTIME_R */
+#endif /* HAVE_LOCALTIME_R || HAVE_LOCALTIME_S */
+  return rc;
+}
+#endif /* SQLITE_OMIT_LOCALTIME */
+
+
+#ifndef SQLITE_OMIT_LOCALTIME
+/*
+** Assuming the input DateTime is UTC, move it to its localtime equivalent.
+*/
+static int toLocaltime(
+  DateTime *p,                   /* Date at which to calculate offset */
+  sqlite3_context *pCtx          /* Write error here if one occurs */
+){
+  time_t t;
+  struct tm sLocal;
+  int iYearDiff;
+
+  /* Initialize the contents of sLocal to avoid a compiler warning. */
+  memset(&sLocal, 0, sizeof(sLocal));
+
+  computeJD(p);
+  if( p->iJD<2108667600*(i64)100000 /* 1970-01-01 */
+   || p->iJD>2130141456*(i64)100000 /* 2038-01-18 */
+  ){
+    /* EVIDENCE-OF: R-55269-29598 The localtime_r() C function normally only
+    ** works for years between 1970 and 2037. For dates outside this range,
+    ** SQLite attempts to map the year into an equivalent year within this
+    ** range, do the calculation, then map the year back.
+    */
+    DateTime x = *p;
+    computeYMD_HMS(&x);
+    iYearDiff = (2000 + x.Y%4) - x.Y;
+    x.Y += iYearDiff;
+    x.validJD = 0;
+    computeJD(&x);
+    t = (time_t)(x.iJD/1000 -  21086676*(i64)10000);
+  }else{
+    iYearDiff = 0;
+    t = (time_t)(p->iJD/1000 -  21086676*(i64)10000);
+  }
+  if( osLocaltime(&t, &sLocal) ){
+    sqlite3_result_error(pCtx, "local time unavailable", -1);
+    return SQLITE_ERROR;
+  }
+  p->Y = sLocal.tm_year + 1900 - iYearDiff;
+  p->M = sLocal.tm_mon + 1;
+  p->D = sLocal.tm_mday;
+  p->h = sLocal.tm_hour;
+  p->m = sLocal.tm_min;
+  p->s = sLocal.tm_sec + (p->iJD%1000)*0.001;
+  p->validYMD = 1;
+  p->validHMS = 1;
+  p->validJD = 0;
+  p->rawS = 0;
+  p->tz = 0;
+  p->isError = 0;
+  return SQLITE_OK;
+}
+#endif /* SQLITE_OMIT_LOCALTIME */
+
+/*
+** The following table defines various date transformations of the form
+**
+**            'NNN days'
+**
+** Where NNN is an arbitrary floating-point number and "days" can be one
+** of several units of time.
+*/
+static const struct {
+  u8 nName;           /* Length of the name */
+  char zName[7];      /* Name of the transformation */
+  float rLimit;       /* Maximum NNN value for this transform */
+  float rXform;       /* Constant used for this transform */
+} aXformType[] = {
+  /* 0 */ { 6, "second",   4.6427e+14,         1.0  },
+  /* 1 */ { 6, "minute",   7.7379e+12,        60.0  },
+  /* 2 */ { 4, "hour",     1.2897e+11,      3600.0  },
+  /* 3 */ { 3, "day",      5373485.0,      86400.0  },
+  /* 4 */ { 5, "month",    176546.0,     2592000.0  },
+  /* 5 */ { 4, "year",     14713.0,     31536000.0  },
+};
+
+/*
+** If the DateTime p is raw number, try to figure out if it is
+** a julian day number of a unix timestamp.  Set the p value
+** appropriately.
+*/
+static void autoAdjustDate(DateTime *p){
+  if( !p->rawS || p->validJD ){
+    p->rawS = 0;
+  }else if( p->s>=-21086676*(i64)10000        /* -4713-11-24 12:00:00 */
+         && p->s<=(25340230*(i64)10000)+799   /*  9999-12-31 23:59:59 */
+  ){
+    double r = p->s*1000.0 + 210866760000000.0;
+    clearYMD_HMS_TZ(p);
+    p->iJD = (sqlite3_int64)(r + 0.5);
+    p->validJD = 1;
+    p->rawS = 0;
+  }
+}
+
+/*
+** Process a modifier to a date-time stamp.  The modifiers are
+** as follows:
+**
+**     NNN days
+**     NNN hours
+**     NNN minutes
+**     NNN.NNNN seconds
+**     NNN months
+**     NNN years
+**     +/-YYYY-MM-DD HH:MM:SS.SSS
+**     ceiling
+**     floor
+**     start of month
+**     start of year
+**     start of week
+**     start of day
+**     weekday N
+**     unixepoch
+**     auto
+**     localtime
+**     utc
+**     subsec
+**     subsecond
+**
+** Return 0 on success and 1 if there is any kind of error. If the error
+** is in a system call (i.e. localtime()), then an error message is written
+** to context pCtx. If the error is an unrecognized modifier, no error is
+** written to pCtx.
+*/
+static int parseModifier(
+  sqlite3_context *pCtx,      /* Function context */
+  const char *z,              /* The text of the modifier */
+  int n,                      /* Length of zMod in bytes */
+  DateTime *p,                /* The date/time value to be modified */
+  int idx                     /* Parameter index of the modifier */
+){
+  int rc = 1;
+  double r;
+  switch(sqlite3UpperToLower[(u8)z[0]] ){
+    case 'a': {
+      /*
+      **    auto
+      **
+      ** If rawS is available, then interpret as a julian day number, or
+      ** a unix timestamp, depending on its magnitude.
+      */
+      if( sqlite3_stricmp(z, "auto")==0 ){
+        if( idx>1 ) return 1; /* IMP: R-33611-57934 */
+        autoAdjustDate(p);
+        rc = 0;
+      }
+      break;
+    }
+    case 'c': {
+      /*
+      **    ceiling
+      **
+      ** Resolve day-of-month overflow by rolling forward into the next
+      ** month.  As this is the default action, this modifier is really
+      ** a no-op that is only included for symmetry.  See "floor".
+      */
+      if( sqlite3_stricmp(z, "ceiling")==0 ){
+        computeJD(p);
+        clearYMD_HMS_TZ(p);
+        rc = 0;
+        p->nFloor = 0;
+      }
+      break;
+    }
+    case 'f': {
+      /*
+      **    floor
+      **
+      ** Resolve day-of-month overflow by rolling back to the end of the
+      ** previous month.
+      */
+      if( sqlite3_stricmp(z, "floor")==0 ){
+        computeJD(p);
+        p->iJD -= p->nFloor*86400000;
+        clearYMD_HMS_TZ(p);
+        rc = 0;
+      }
+      break;
+    }
+    case 'j': {
+      /*
+      **    julianday
+      **
+      ** Always interpret the prior number as a julian-day value.  If this
+      ** is not the first modifier, or if the prior argument is not a numeric
+      ** value in the allowed range of julian day numbers understood by
+      ** SQLite (0..5373484.5) then the result will be NULL.
+      */
+      if( sqlite3_stricmp(z, "julianday")==0 ){
+        if( idx>1 ) return 1;  /* IMP: R-31176-64601 */
+        if( p->validJD && p->rawS ){
+          rc = 0;
+          p->rawS = 0;
+        }
+      }
+      break;
+    }
+#ifndef SQLITE_OMIT_LOCALTIME
+    case 'l': {
+      /*    localtime
+      **
+      ** Assuming the current time value is UTC (a.k.a. GMT), shift it to
+      ** show local time.
+      */
+      if( sqlite3_stricmp(z, "localtime")==0 && sqlite3NotPureFunc(pCtx) ){
+        rc = p->isLocal ? SQLITE_OK : toLocaltime(p, pCtx);
+        p->isUtc = 0;
+        p->isLocal = 1;
+      }
+      break;
+    }
+#endif
+    case 'u': {
+      /*
+      **    unixepoch
+      **
+      ** Treat the current value of p->s as the number of
+      ** seconds since 1970.  Convert to a real julian day number.
+      */
+      if( sqlite3_stricmp(z, "unixepoch")==0 && p->rawS ){
+        if( idx>1 ) return 1;  /* IMP: R-49255-55373 */
+        r = p->s*1000.0 + 210866760000000.0;
+        if( r>=0.0 && r<464269060800000.0 ){
+          clearYMD_HMS_TZ(p);
+          p->iJD = (sqlite3_int64)(r + 0.5);
+          p->validJD = 1;
+          p->rawS = 0;
+          rc = 0;
+        }
+      }
+#ifndef SQLITE_OMIT_LOCALTIME
+      else if( sqlite3_stricmp(z, "utc")==0 && sqlite3NotPureFunc(pCtx) ){
+        if( p->isUtc==0 ){
+          i64 iOrigJD;              /* Original localtime */
+          i64 iGuess;               /* Guess at the corresponding utc time */
+          int cnt = 0;              /* Safety to prevent infinite loop */
+          i64 iErr;                 /* Guess is off by this much */
+
+          computeJD(p);
+          iGuess = iOrigJD = p->iJD;
+          iErr = 0;
+          do{
+            DateTime new;
+            memset(&new, 0, sizeof(new));
+            iGuess -= iErr;
+            new.iJD = iGuess;
+            new.validJD = 1;
+            rc = toLocaltime(&new, pCtx);
+            if( rc ) return rc;
+            computeJD(&new);
+            iErr = new.iJD - iOrigJD;
+          }while( iErr && cnt++<3 );
+          memset(p, 0, sizeof(*p));
+          p->iJD = iGuess;
+          p->validJD = 1;
+          p->isUtc = 1;
+          p->isLocal = 0;
+        }
+        rc = SQLITE_OK;
+      }
+#endif
+      break;
+    }
+    case 'w': {
+      /*
+      **    weekday N
+      **
+      ** Move the date to the same time on the next occurrence of
+      ** weekday N where 0==Sunday, 1==Monday, and so forth.  If the
+      ** date is already on the appropriate weekday, this is a no-op.
+      */
+      if( sqlite3_strnicmp(z, "weekday ", 8)==0
+               && sqlite3AtoF(&z[8], &r)>0
+               && r>=0.0 && r<7.0 && (n=(int)r)==r ){
+        sqlite3_int64 Z;
+        computeYMD_HMS(p);
+        p->tz = 0;
+        p->validJD = 0;
+        computeJD(p);
+        Z = ((p->iJD + 129600000)/86400000) % 7;
+        if( Z>n ) Z -= 7;
+        p->iJD += (n - Z)*86400000;
+        clearYMD_HMS_TZ(p);
+        rc = 0;
+      }
+      break;
+    }
+    case 's': {
+      /*
+      **    start of TTTTT
+      **
+      ** Move the date backwards to the beginning of the current day,
+      ** or month or year.
+      **
+      **    subsecond
+      **    subsec
+      **
+      ** Show subsecond precision in the output of datetime() and
+      ** unixepoch() and strftime('%s').
+      */
+      if( sqlite3_strnicmp(z, "start of ", 9)!=0 ){
+        if( sqlite3_stricmp(z, "subsec")==0
+         || sqlite3_stricmp(z, "subsecond")==0
+        ){
+          p->useSubsec = 1;
+          rc = 0;
+        }
+        break;
+      }
+      if( !p->validJD && !p->validYMD && !p->validHMS ) break;
+      z += 9;
+      computeYMD(p);
+      p->validHMS = 1;
+      p->h = p->m = 0;
+      p->s = 0.0;
+      p->rawS = 0;
+      p->tz = 0;
+      p->validJD = 0;
+      if( sqlite3_stricmp(z,"month")==0 ){
+        p->D = 1;
+        rc = 0;
+      }else if( sqlite3_stricmp(z,"year")==0 ){
+        p->M = 1;
+        p->D = 1;
+        rc = 0;
+      }else if( sqlite3_stricmp(z,"day")==0 ){
+        rc = 0;
+      }
+      break;
+    }
+    case '+':
+    case '-':
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9': {
+      double rRounder;
+      int i, rx;
+      int Y,M,D,h,m,x;
+      const char *z2 = z;
+      char *zCopy;
+      sqlite3 *db = sqlite3_context_db_handle(pCtx);
+      char z0 = z[0];
+      for(n=1; z[n]; n++){
+        if( z[n]==':' ) break;
+        if( sqlite3Isspace(z[n]) ) break;
+        if( z[n]=='-' ){
+          if( n==5 && getDigits(&z[1], "40f", &Y)==1 ) break;
+          if( n==6 && getDigits(&z[1], "50f", &Y)==1 ) break;
+        }
+      }
+      zCopy = sqlite3DbStrNDup(db, z, n);
+      if( zCopy==0 ) break;
+      rx = sqlite3AtoF(zCopy, &r)<=0;
+      sqlite3DbFree(db, zCopy);
+      if( rx ){
+        assert( rc==1 );
+        break;
+      }
+      if( z[n]=='-' ){
+        /* A modifier of the form (+|-)YYYY-MM-DD adds or subtracts the
+        ** specified number of years, months, and days.  MM is limited to
+        ** the range 0-11 and DD is limited to 0-30.
+        */
+        if( z0!='+' && z0!='-' ) break;  /* Must start with +/- */
+        if( n==5 ){
+          if( getDigits(&z[1], "40f-20a-20d", &Y, &M, &D)!=3 ) break;
+        }else{
+          assert( n==6 );
+          if( getDigits(&z[1], "50f-20a-20d", &Y, &M, &D)!=3 ) break;
+          z++;
+        }
+        if( M>=12 ) break;                   /* M range 0..11 */
+        if( D>=31 ) break;                   /* D range 0..30 */
+        computeYMD_HMS(p);
+        p->validJD = 0;
+        if( z0=='-' ){
+          p->Y -= Y;
+          p->M -= M;
+          D = -D;
+        }else{
+          p->Y += Y;
+          p->M += M;
+        }
+        x = p->M>0 ? (p->M-1)/12 : (p->M-12)/12;
+        p->Y += x;
+        p->M -= x*12;
+        computeFloor(p);
+        computeJD(p);
+        p->validHMS = 0;
+        p->validYMD = 0;
+        p->iJD += (i64)D*86400000;
+        if( z[11]==0 ){
+          rc = 0;
+          break;
+        }
+        if( sqlite3Isspace(z[11])
+         && getDigits(&z[12], "20c:20e", &h, &m)==2
+        ){
+          z2 = &z[12];
+          n = 2;
+        }else{
+          break;
+        }
+      }
+      if( z2[n]==':' ){
+        /* A modifier of the form (+|-)HH:MM:SS.FFF adds (or subtracts) the
+        ** specified number of hours, minutes, seconds, and fractional seconds
+        ** to the time.  The ".FFF" may be omitted.  The ":SS.FFF" may be
+        ** omitted.
+        */
+
+        DateTime tx;
+        sqlite3_int64 day;
+        if( !sqlite3Isdigit(*z2) ) z2++;
+        memset(&tx, 0, sizeof(tx));
+        if( parseHhMmSs(z2, &tx) ) break;
+        computeJD(&tx);
+        tx.iJD -= 43200000;
+        day = tx.iJD/86400000;
+        tx.iJD -= day*86400000;
+        if( z0=='-' ) tx.iJD = -tx.iJD;
+        computeJD(p);
+        clearYMD_HMS_TZ(p);
+        p->iJD += tx.iJD;
+        rc = 0;
+        break;
+      }
+
+      /* If control reaches this point, it means the transformation is
+      ** one of the forms like "+NNN days".  */
+      z += n;
+      while( sqlite3Isspace(*z) ) z++;
+      n = sqlite3Strlen30(z);
+      if( n<3 || n>10 ) break;
+      if( sqlite3UpperToLower[(u8)z[n-1]]=='s' ) n--;
+      computeJD(p);
+      assert( rc==1 );
+      rRounder = r<0 ? -0.5 : +0.5;
+      p->nFloor = 0;
+      for(i=0; i<ArraySize(aXformType); i++){
+        if( aXformType[i].nName==n
+         && sqlite3_strnicmp(aXformType[i].zName, z, n)==0
+         && r>-aXformType[i].rLimit && r<aXformType[i].rLimit
+        ){
+          switch( i ){
+            case 4: { /* Special processing to add months */
+              assert( strcmp(aXformType[4].zName,"month")==0 );
+              computeYMD_HMS(p);
+              p->M += (int)r;
+              x = p->M>0 ? (p->M-1)/12 : (p->M-12)/12;
+              p->Y += x;
+              p->M -= x*12;
+              computeFloor(p);
+              p->validJD = 0;
+              r -= (int)r;
+              break;
+            }
+            case 5: { /* Special processing to add years */
+              int y = (int)r;
+              assert( strcmp(aXformType[5].zName,"year")==0 );
+              computeYMD_HMS(p);
+              assert( p->M>=0 && p->M<=12 );
+              p->Y += y;
+              computeFloor(p);
+              p->validJD = 0;
+              r -= (int)r;
+              break;
+            }
+          }
+          computeJD(p);
+          p->iJD += (sqlite3_int64)(r*1000.0*aXformType[i].rXform + rRounder);
+          rc = 0;
+          break;
+        }
+      }
+      clearYMD_HMS_TZ(p);
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+  return rc;
+}
+
+/*
+** Process time function arguments.  argv[0] is a date-time stamp.
+** argv[1] and following are modifiers.  Parse them all and write
+** the resulting time into the DateTime structure p.  Return 0
+** on success and 1 if there are any errors.
+**
+** If there are zero parameters (if even argv[0] is undefined)
+** then assume a default value of "now" for argv[0].
+*/
+static int isDate(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv,
+  DateTime *p
+){
+  int i, n;
+  const unsigned char *z;
+  int eType;
+  memset(p, 0, sizeof(*p));
+  if( argc==0 ){
+    if( !sqlite3NotPureFunc(context) ) return 1;
+    return setDateTimeToCurrent(context, p);
+  }
+  if( (eType = sqlite3_value_type(argv[0]))==SQLITE_FLOAT
+                   || eType==SQLITE_INTEGER ){
+    setRawDateNumber(p, sqlite3_value_double(argv[0]));
+  }else{
+    z = sqlite3_value_text(argv[0]);
+    if( !z || parseDateOrTime(context, (char*)z, p) ){
+      return 1;
+    }
+  }
+  for(i=1; i<argc; i++){
+    z = sqlite3_value_text(argv[i]);
+    n = sqlite3_value_bytes(argv[i]);
+    if( z==0 || parseModifier(context, (char*)z, n, p, i) ) return 1;
+  }
+  computeJD(p);
+  if( p->isError || !validJulianDay(p->iJD) ) return 1;
+  if( argc==1 && p->validYMD && p->D>28 ){
+    /* Make sure a YYYY-MM-DD is normalized.
+    ** Example: 2023-02-31 -> 2023-03-03 */
+    assert( p->validJD );
+    p->validYMD = 0;
+  }
+  return 0;
+}
+
+
+/*
+** The following routines implement the various date and time functions
+** of SQLite.
+*/
+
+/*
+**    julianday( TIMESTRING, MOD, MOD, ...)
+**
+** Return the julian day number of the date specified in the arguments
+*/
+static void juliandayFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    computeJD(&x);
+    sqlite3_result_double(context, x.iJD/86400000.0);
+  }
+}
+
+/*
+**    unixepoch( TIMESTRING, MOD, MOD, ...)
+**
+** Return the number of seconds (including fractional seconds) since
+** the unix epoch of 1970-01-01 00:00:00 GMT.
+*/
+static void unixepochFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    computeJD(&x);
+    if( x.useSubsec ){
+      sqlite3_result_double(context, (x.iJD - 21086676*(i64)10000000)/1000.0);
+    }else{
+      sqlite3_result_int64(context, x.iJD/1000 - 21086676*(i64)10000);
+    }
+  }
+}
+
+/*
+**    datetime( TIMESTRING, MOD, MOD, ...)
+**
+** Return YYYY-MM-DD HH:MM:SS
+*/
+static void datetimeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    int Y, s, n;
+    char zBuf[32];
+    computeYMD_HMS(&x);
+    Y = x.Y;
+    if( Y<0 ) Y = -Y;
+    zBuf[1] = '0' + (Y/1000)%10;
+    zBuf[2] = '0' + (Y/100)%10;
+    zBuf[3] = '0' + (Y/10)%10;
+    zBuf[4] = '0' + (Y)%10;
+    zBuf[5] = '-';
+    zBuf[6] = '0' + (x.M/10)%10;
+    zBuf[7] = '0' + (x.M)%10;
+    zBuf[8] = '-';
+    zBuf[9] = '0' + (x.D/10)%10;
+    zBuf[10] = '0' + (x.D)%10;
+    zBuf[11] = ' ';
+    zBuf[12] = '0' + (x.h/10)%10;
+    zBuf[13] = '0' + (x.h)%10;
+    zBuf[14] = ':';
+    zBuf[15] = '0' + (x.m/10)%10;
+    zBuf[16] = '0' + (x.m)%10;
+    zBuf[17] = ':';
+    if( x.useSubsec ){
+      s = (int)(1000.0*x.s + 0.5);
+      zBuf[18] = '0' + (s/10000)%10;
+      zBuf[19] = '0' + (s/1000)%10;
+      zBuf[20] = '.';
+      zBuf[21] = '0' + (s/100)%10;
+      zBuf[22] = '0' + (s/10)%10;
+      zBuf[23] = '0' + (s)%10;
+      zBuf[24] = 0;
+      n = 24;
+    }else{
+      s = (int)x.s;
+      zBuf[18] = '0' + (s/10)%10;
+      zBuf[19] = '0' + (s)%10;
+      zBuf[20] = 0;
+      n = 20;
+    }
+    if( x.Y<0 ){
+      zBuf[0] = '-';
+      sqlite3_result_text(context, zBuf, n, SQLITE_TRANSIENT);
+    }else{
+      sqlite3_result_text(context, &zBuf[1], n-1, SQLITE_TRANSIENT);
+    }
+  }
+}
+
+/*
+**    time( TIMESTRING, MOD, MOD, ...)
+**
+** Return HH:MM:SS
+*/
+static void timeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    int s, n;
+    char zBuf[16];
+    computeHMS(&x);
+    zBuf[0] = '0' + (x.h/10)%10;
+    zBuf[1] = '0' + (x.h)%10;
+    zBuf[2] = ':';
+    zBuf[3] = '0' + (x.m/10)%10;
+    zBuf[4] = '0' + (x.m)%10;
+    zBuf[5] = ':';
+    if( x.useSubsec ){
+      s = (int)(1000.0*x.s + 0.5);
+      zBuf[6] = '0' + (s/10000)%10;
+      zBuf[7] = '0' + (s/1000)%10;
+      zBuf[8] = '.';
+      zBuf[9] = '0' + (s/100)%10;
+      zBuf[10] = '0' + (s/10)%10;
+      zBuf[11] = '0' + (s)%10;
+      zBuf[12] = 0;
+      n = 12;
+    }else{
+      s = (int)x.s;
+      zBuf[6] = '0' + (s/10)%10;
+      zBuf[7] = '0' + (s)%10;
+      zBuf[8] = 0;
+      n = 8;
+    }
+    sqlite3_result_text(context, zBuf, n, SQLITE_TRANSIENT);
+  }
+}
+
+/*
+**    date( TIMESTRING, MOD, MOD, ...)
+**
+** Return YYYY-MM-DD
+*/
+static void dateFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    int Y;
+    char zBuf[16];
+    computeYMD(&x);
+    Y = x.Y;
+    if( Y<0 ) Y = -Y;
+    zBuf[1] = '0' + (Y/1000)%10;
+    zBuf[2] = '0' + (Y/100)%10;
+    zBuf[3] = '0' + (Y/10)%10;
+    zBuf[4] = '0' + (Y)%10;
+    zBuf[5] = '-';
+    zBuf[6] = '0' + (x.M/10)%10;
+    zBuf[7] = '0' + (x.M)%10;
+    zBuf[8] = '-';
+    zBuf[9] = '0' + (x.D/10)%10;
+    zBuf[10] = '0' + (x.D)%10;
+    zBuf[11] = 0;
+    if( x.Y<0 ){
+      zBuf[0] = '-';
+      sqlite3_result_text(context, zBuf, 11, SQLITE_TRANSIENT);
+    }else{
+      sqlite3_result_text(context, &zBuf[1], 10, SQLITE_TRANSIENT);
+    }
+  }
+}
+
+/*
+** Compute the number of days after the most recent January 1.
+**
+** In other words, compute the zero-based day number for the
+** current year:
+**
+**   Jan01 = 0,  Jan02 = 1, ..., Jan31 = 30, Feb01 = 31, ...
+**   Dec31 = 364 or 365.
+*/
+static int daysAfterJan01(DateTime *pDate){
+  DateTime jan01 = *pDate;
+  assert( jan01.validYMD );
+  assert( jan01.validHMS );
+  assert( pDate->validJD );
+  jan01.validJD = 0;
+  jan01.M = 1;
+  jan01.D = 1;
+  computeJD(&jan01);
+  return (int)((pDate->iJD-jan01.iJD+43200000)/86400000);
+}
+
+/*
+** Return the number of days after the most recent Monday.
+**
+** In other words, return the day of the week according
+** to this code:
+**
+**   0=Monday, 1=Tuesday, 2=Wednesday, ..., 6=Sunday.
+*/
+static int daysAfterMonday(DateTime *pDate){
+  assert( pDate->validJD );
+  return (int)((pDate->iJD+43200000)/86400000) % 7;
+}
+
+/*
+** Return the number of days after the most recent Sunday.
+**
+** In other words, return the day of the week according
+** to this code:
+**
+**   0=Sunday, 1=Monday, 2=Tuesday, ..., 6=Saturday
+*/
+static int daysAfterSunday(DateTime *pDate){
+  assert( pDate->validJD );
+  return (int)((pDate->iJD+129600000)/86400000) % 7;
+}
+
+/*
+**    strftime( FORMAT, TIMESTRING, MOD, MOD, ...)
+**
+** Return a string described by FORMAT.  Conversions as follows:
+**
+**   %d  day of month  01-31
+**   %e  day of month  1-31
+**   %f  ** fractional seconds  SS.SSS
+**   %F  ISO date.  YYYY-MM-DD
+**   %G  ISO year corresponding to %V 0000-9999.
+**   %g  2-digit ISO year corresponding to %V 00-99
+**   %H  hour 00-24
+**   %k  hour  0-24  (leading zero converted to space)
+**   %I  hour 01-12
+**   %j  day of year 001-366
+**   %J  ** julian day number
+**   %l  hour  1-12  (leading zero converted to space)
+**   %m  month 01-12
+**   %M  minute 00-59
+**   %p  "AM" or "PM"
+**   %P  "am" or "pm"
+**   %R  time as HH:MM
+**   %s  seconds since 1970-01-01
+**   %S  seconds 00-59
+**   %T  time as HH:MM:SS
+**   %u  day of week 1-7  Monday==1, Sunday==7
+**   %w  day of week 0-6  Sunday==0, Monday==1
+**   %U  week of year 00-53  (First Sunday is start of week 01)
+**   %V  week of year 01-53  (First week containing Thursday is week 01)
+**   %W  week of year 00-53  (First Monday is start of week 01)
+**   %Y  year 0000-9999
+**   %%  %
+*/
+static void strftimeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  size_t i,j;
+  sqlite3 *db;
+  const char *zFmt;
+  sqlite3_str sRes;
+
+
+  if( argc==0 ) return;
+  zFmt = (const char*)sqlite3_value_text(argv[0]);
+  if( zFmt==0 || isDate(context, argc-1, argv+1, &x) ) return;
+  db = sqlite3_context_db_handle(context);
+  sqlite3StrAccumInit(&sRes, 0, 0, 0, db->aLimit[SQLITE_LIMIT_LENGTH]);
+
+  computeJD(&x);
+  computeYMD_HMS(&x);
+  for(i=j=0; zFmt[i]; i++){
+    char cf;
+    if( zFmt[i]!='%' ) continue;
+    if( j<i ) sqlite3_str_append(&sRes, zFmt+j, (int)(i-j));
+    i++;
+    j = i + 1;
+    cf = zFmt[i];
+    switch( cf ){
+      case 'd':  /* Fall thru */
+      case 'e': {
+        sqlite3_str_appendf(&sRes, cf=='d' ? "%02d" : "%2d", x.D);
+        break;
+      }
+      case 'f': {  /* Fractional seconds.  (Non-standard) */
+        double s = x.s;
+        if( NEVER(s>59.999) ) s = 59.999;
+        sqlite3_str_appendf(&sRes, "%06.3f", s);
+        break;
+      }
+      case 'F': {
+        sqlite3_str_appendf(&sRes, "%04d-%02d-%02d", x.Y, x.M, x.D);
+        break;
+      }
+      case 'G': /* Fall thru */
+      case 'g': {
+        DateTime y = x;
+        assert( y.validJD );
+        /* Move y so that it is the Thursday in the same week as x */
+        y.iJD += (3 - daysAfterMonday(&x))*86400000;
+        y.validYMD = 0;
+        computeYMD(&y);
+        if( cf=='g' ){
+          sqlite3_str_appendf(&sRes, "%02d", y.Y%100);
+        }else{
+          sqlite3_str_appendf(&sRes, "%04d", y.Y);
+        }
+        break;
+      }
+      case 'H':
+      case 'k': {
+        sqlite3_str_appendf(&sRes, cf=='H' ? "%02d" : "%2d", x.h);
+        break;
+      }
+      case 'I': /* Fall thru */
+      case 'l': {
+        int h = x.h;
+        if( h>12 ) h -= 12;
+        if( h==0 ) h = 12;
+        sqlite3_str_appendf(&sRes, cf=='I' ? "%02d" : "%2d", h);
+        break;
+      }
+      case 'j': {  /* Day of year.  Jan01==1, Jan02==2, and so forth */
+        sqlite3_str_appendf(&sRes,"%03d",daysAfterJan01(&x)+1);
+        break;
+      }
+      case 'J': {  /* Julian day number.  (Non-standard) */
+        sqlite3_str_appendf(&sRes,"%.16g",x.iJD/86400000.0);
+        break;
+      }
+      case 'm': {
+        sqlite3_str_appendf(&sRes,"%02d",x.M);
+        break;
+      }
+      case 'M': {
+        sqlite3_str_appendf(&sRes,"%02d",x.m);
+        break;
+      }
+      case 'p': /* Fall thru */
+      case 'P': {
+        if( x.h>=12 ){
+          sqlite3_str_append(&sRes, cf=='p' ? "PM" : "pm", 2);
+        }else{
+          sqlite3_str_append(&sRes, cf=='p' ? "AM" : "am", 2);
+        }
+        break;
+      }
+      case 'R': {
+        sqlite3_str_appendf(&sRes, "%02d:%02d", x.h, x.m);
+        break;
+      }
+      case 's': {
+        if( x.useSubsec ){
+          sqlite3_str_appendf(&sRes,"%.3f",
+                (x.iJD - 21086676*(i64)10000000)/1000.0);
+        }else{
+          i64 iS = (i64)(x.iJD/1000 - 21086676*(i64)10000);
+          sqlite3_str_appendf(&sRes,"%lld",iS);
+        }
+        break;
+      }
+      case 'S': {
+        sqlite3_str_appendf(&sRes,"%02d",(int)x.s);
+        break;
+      }
+      case 'T': {
+        sqlite3_str_appendf(&sRes,"%02d:%02d:%02d", x.h, x.m, (int)x.s);
+        break;
+      }
+      case 'u':    /* Day of week.  1 to 7.  Monday==1, Sunday==7 */
+      case 'w': {  /* Day of week.  0 to 6.  Sunday==0, Monday==1 */
+        char c = (char)daysAfterSunday(&x) + '0';
+        if( c=='0' && cf=='u' ) c = '7';
+        sqlite3_str_appendchar(&sRes, 1, c);
+        break;
+      }
+      case 'U': {  /* Week num. 00-53. First Sun of the year is week 01 */
+        sqlite3_str_appendf(&sRes,"%02d",
+              (daysAfterJan01(&x)-daysAfterSunday(&x)+7)/7);
+        break;
+      }
+      case 'V': {  /* Week num. 01-53. First week with a Thur is week 01 */
+        DateTime y = x;
+        /* Adjust y so that is the Thursday in the same week as x */
+        assert( y.validJD );
+        y.iJD += (3 - daysAfterMonday(&x))*86400000;
+        y.validYMD = 0;
+        computeYMD(&y);
+        sqlite3_str_appendf(&sRes,"%02d", daysAfterJan01(&y)/7+1);
+        break;
+      }
+      case 'W': {  /* Week num. 00-53. First Mon of the year is week 01 */
+        sqlite3_str_appendf(&sRes,"%02d",
+           (daysAfterJan01(&x)-daysAfterMonday(&x)+7)/7);
+        break;
+      }
+      case 'Y': {
+        sqlite3_str_appendf(&sRes,"%04d",x.Y);
+        break;
+      }
+      case '%': {
+        sqlite3_str_appendchar(&sRes, 1, '%');
+        break;
+      }
+      default: {
+        sqlite3_str_reset(&sRes);
+        return;
+      }
+    }
+  }
+  if( j<i ) sqlite3_str_append(&sRes, zFmt+j, (int)(i-j));
+  sqlite3ResultStrAccum(context, &sRes);
+}
+
+/*
+** current_time()
+**
+** This function returns the same value as time('now').
+*/
+static void ctimeFunc(
+  sqlite3_context *context,
+  int NotUsed,
+  sqlite3_value **NotUsed2
+){
+  UNUSED_PARAMETER2(NotUsed, NotUsed2);
+  timeFunc(context, 0, 0);
+}
+
+/*
+** current_date()
+**
+** This function returns the same value as date('now').
+*/
+static void cdateFunc(
+  sqlite3_context *context,
+  int NotUsed,
+  sqlite3_value **NotUsed2
+){
+  UNUSED_PARAMETER2(NotUsed, NotUsed2);
+  dateFunc(context, 0, 0);
+}
+
+/*
+** timediff(DATE1, DATE2)
+**
+** Return the amount of time that must be added to DATE2 in order to
+** convert it into DATE2.  The time difference format is:
+**
+**     +YYYY-MM-DD HH:MM:SS.SSS
+**
+** The initial "+" becomes "-" if DATE1 occurs before DATE2.  For
+** date/time values A and B, the following invariant should hold:
+**
+**     datetime(A) == (datetime(B, timediff(A,B))
+**
+** Both DATE arguments must be either a julian day number, or an
+** ISO-8601 string.  The unix timestamps are not supported by this
+** routine.
+*/
+static void timediffFunc(
+  sqlite3_context *context,
+  int NotUsed1,
+  sqlite3_value **argv
+){
+  char sign;
+  int Y, M;
+  DateTime d1, d2;
+  sqlite3_str sRes;
+  UNUSED_PARAMETER(NotUsed1);
+  if( isDate(context, 1, &argv[0], &d1) ) return;
+  if( isDate(context, 1, &argv[1], &d2) ) return;
+  computeYMD_HMS(&d1);
+  computeYMD_HMS(&d2);
+  if( d1.iJD>=d2.iJD ){
+    sign = '+';
+    Y = d1.Y - d2.Y;
+    if( Y ){
+      d2.Y = d1.Y;
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    M = d1.M - d2.M;
+    if( M<0 ){
+      Y--;
+      M += 12;
+    }
+    if( M!=0 ){
+      d2.M = d1.M;
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    while( d1.iJD<d2.iJD ){
+      M--;
+      if( M<0 ){
+        M = 11;
+        Y--;
+      }
+      d2.M--;
+      if( d2.M<1 ){
+        d2.M = 12;
+        d2.Y--;
+      }
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    d1.iJD -= d2.iJD;
+    d1.iJD += (u64)1486995408 * (u64)100000;
+  }else /* d1<d2 */{
+    sign = '-';
+    Y = d2.Y - d1.Y;
+    if( Y ){
+      d2.Y = d1.Y;
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    M = d2.M - d1.M;
+    if( M<0 ){
+      Y--;
+      M += 12;
+    }
+    if( M!=0 ){
+      d2.M = d1.M;
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    while( d1.iJD>d2.iJD ){
+      M--;
+      if( M<0 ){
+        M = 11;
+        Y--;
+      }
+      d2.M++;
+      if( d2.M>12 ){
+        d2.M = 1;
+        d2.Y++;
+      }
+      d2.validJD = 0;
+      computeJD(&d2);
+    }
+    d1.iJD = d2.iJD - d1.iJD;
+    d1.iJD += (u64)1486995408 * (u64)100000;
+  }
+  clearYMD_HMS_TZ(&d1);
+  computeYMD_HMS(&d1);
+  sqlite3StrAccumInit(&sRes, 0, 0, 0, 100);
+  sqlite3_str_appendf(&sRes, "%c%04d-%02d-%02d %02d:%02d:%06.3f",
+       sign, Y, M, d1.D-1, d1.h, d1.m, d1.s);
+  sqlite3ResultStrAccum(context, &sRes);
+}
+
+
+/*
+** current_timestamp()
+**
+** This function returns the same value as datetime('now').
+*/
+static void ctimestampFunc(
+  sqlite3_context *context,
+  int NotUsed,
+  sqlite3_value **NotUsed2
+){
+  UNUSED_PARAMETER2(NotUsed, NotUsed2);
+  datetimeFunc(context, 0, 0);
+}
+#endif /* !defined(SQLITE_OMIT_DATETIME_FUNCS) */
+
+#ifdef SQLITE_OMIT_DATETIME_FUNCS
+/*
+** If the library is compiled to omit the full-scale date and time
+** handling (to get a smaller binary), the following minimal version
+** of the functions current_time(), current_date() and current_timestamp()
+** are included instead. This is to support column declarations that
+** include "DEFAULT CURRENT_TIME" etc.
+**
+** This function uses the C-library functions time(), gmtime()
+** and strftime(). The format string to pass to strftime() is supplied
+** as the user-data for the function.
+*/
+static void currentTimeFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  time_t t;
+  char *zFormat = (char *)sqlite3_user_data(context);
+  sqlite3_int64 iT;
+  struct tm *pTm;
+  struct tm sNow;
+  char zBuf[20];
+
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(argv);
+
+  iT = sqlite3StmtCurrentTime(context);
+  if( iT<=0 ) return;
+  t = iT/1000 - 10000*(sqlite3_int64)21086676;
+#if HAVE_GMTIME_R
+  pTm = gmtime_r(&t, &sNow);
+#else
+  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN));
+  pTm = gmtime(&t);
+  if( pTm ) memcpy(&sNow, pTm, sizeof(sNow));
+  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN));
+#endif
+  if( pTm ){
+    strftime(zBuf, 20, zFormat, &sNow);
+    sqlite3_result_text(context, zBuf, -1, SQLITE_TRANSIENT);
+  }
+}
+#endif
+
+#if !defined(SQLITE_OMIT_DATETIME_FUNCS) && defined(SQLITE_DEBUG)
+/*
+**   datedebug(...)
+**
+** This routine returns JSON that describes the internal DateTime object.
+** Used for debugging and testing only.  Subject to change.
+*/
+static void datedebugFunc(
+  sqlite3_context *context,
+  int argc,
+  sqlite3_value **argv
+){
+  DateTime x;
+  if( isDate(context, argc, argv, &x)==0 ){
+    char *zJson;
+    zJson = sqlite3_mprintf(
+      "{iJD:%lld,Y:%d,M:%d,D:%d,h:%d,m:%d,tz:%d,"
+      "s:%.3f,validJD:%d,validYMD:%d,validHMS:%d,"
+      "nFloor:%d,rawS:%d,isError:%d,useSubsec:%d,"
+      "isUtc:%d,isLocal:%d}",
+      x.iJD, x.Y, x.M, x.D, x.h, x.m, x.tz,
+      x.s, x.validJD, x.validYMD, x.validHMS,
+      x.nFloor, x.rawS, x.isError, x.useSubsec,
+      x.isUtc, x.isLocal);
+    sqlite3_result_text(context, zJson, -1, sqlite3_free);
+  }
+}
+#endif /* !SQLITE_OMIT_DATETIME_FUNCS && SQLITE_DEBUG */
+
+
+/*
+** This function registered all of the above C functions as SQL
+** functions.  This should be the only routine in this file with
+** external linkage.
+*/
+SQLITE_PRIVATE void sqlite3RegisterDateTimeFunctions(void){
+  static FuncDef aDateTimeFuncs[] = {
+#ifndef SQLITE_OMIT_DATETIME_FUNCS
+    PURE_DATE(julianday,        -1, 0, 0, juliandayFunc ),
+    PURE_DATE(unixepoch,        -1, 0, 0, unixepochFunc ),
+    PURE_DATE(date,             -1, 0, 0, dateFunc      ),
+    PURE_DATE(time,             -1, 0, 0, timeFunc      ),
+    PURE_DATE(datetime,         -1, 0, 0, datetimeFunc  ),
+    PURE_DATE(strftime,         -1, 0, 0, strftimeFunc  ),
+    PURE_DATE(timediff,          2, 0, 0, timediffFunc  ),
+#ifdef SQLITE_DEBUG
+    PURE_DATE(datedebug,        -1, 0, 0, datedebugFunc ),
+#endif
+    DFUNCTION(current_time,      0, 0, 0, ctimeFunc     ),
+    DFUNCTION(current_timestamp, 0, 0, 0, ctimestampFunc),
+    DFUNCTION(current_date,      0, 0, 0, cdateFunc     ),
+#else
+    STR_FUNCTION(current_time,      0, "%H:%M:%S",          0, currentTimeFunc),
+    STR_FUNCTION(current_date,      0, "%Y-%m-%d",          0, currentTimeFunc),
+    STR_FUNCTION(current_timestamp, 0, "%Y-%m-%d %H:%M:%S", 0, currentTimeFunc),
+#endif
+  };
+  sqlite3InsertBuiltinFuncs(aDateTimeFuncs, ArraySize(aDateTimeFuncs));
+}
+
+/************** End of date.c ************************************************/
+/************** Begin file os.c **********************************************/
+/*
+** 2005 November 29
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+******************************************************************************
+**
+** This file contains OS interface code that is common to all
+** architectures.
+*/
+/* #include "sqliteInt.h" */
+
+/*
+** If we compile with the SQLITE_TEST macro set, then the following block
+** of code will give us the ability to simulate a disk I/O error.  This
+** is used for testing the I/O recovery logic.
+*/
+#if defined(SQLITE_TEST)
+SQLITE_API int sqlite3_io_error_hit = 0;            /* Total number of I/O Errors */
+SQLITE_API int sqlite3_io_error_hardhit = 0;        /* Number of non-benign errors */
+SQLITE_API int sqlite3_io_error_pending = 0;        /* Count down to first I/O error */
+SQLITE_API int sqlite3_io_error_persist = 0;        /* True if I/O errors persist */
+SQLITE_API int sqlite3_io_error_benign = 0;         /* True if errors are benign */
+SQLITE_API int sqlite3_diskfull_pending = 0;
+SQLITE_API int sqlite3_diskfull = 0;
+#endif /* defined(SQLITE_TEST) */
+
+/*
+** When testing, also keep a count of the number of open files.
+*/
+#if defined(SQLITE_TEST)
+SQLITE_API int sqlite3_open_file_count = 0;
+#endif /* defined(SQLITE_TEST) */
+
+/*
+** The default SQLite sqlite3_vfs implementations do not allocate
+** memory (actually, os_unix.c allocates a small amount of memory
+** from within OsOpen()), but some third-party implementations may.
+** So we test the effects of a malloc() failing and the sqlite3OsXXX()
+** function returning SQLITE_IOERR_NOMEM using the DO_OS_MALLOC_TEST macro.
+**
+** The following functions are instrumented for malloc() failure
+** testing:
+**
+**     sqlite3OsRead()
+**     sqlite3OsWrite()
+**     sqlite3OsSync()
+**     sqlite3OsFileSize()
+**     sqlite3OsLock()
+**     sqlite3OsCheckReservedLock()
+**     sqlite3OsFileControl()
+**     sqlite3OsShmMap()
+**     sqlite3OsOpen()
+**     sqlite3OsDelete()
+**     sqlite3OsAccess()
+**     sqlite3OsFullPathname()
+**
+*/
+#if defined(SQLITE_TEST)
+SQLITE_API int sqlite3_memdebug_vfs_oom_test = 1;
+  #define DO_OS_MALLOC_TEST(x)                                       \
+  if (sqlite3_memdebug_vfs_oom_test && (!x || !sqlite3JournalIsInMemory(x))) { \
+    void *pTstAlloc = sqlite3Malloc(10);                             \
+    if (!pTstAlloc) return SQLITE_IOERR_NOMEM_BKPT;                  \
+    sqlite3_free(pTstAlloc);                                         \
+  }
+#else
+  #define DO_OS_MALLOC_TEST(x)
+#endif
+
+/*
+** The following routines are convenience wrappers around methods
+** of the sqlite3_file object.  This is mostly just syntactic sugar. All
+** of this would be completely automatic if SQLite were coded using
+** C++ instead of plain old C.
+*/
+SQLITE_PRIVATE void sqlite3OsClose(sqlite3_file *pId){
+  if( pId->pMethods ){
+    pId->pMethods->xClose(pId);
+    pId->pMethods = 0;
+  }
+}
+SQLITE_PRIVATE int sqlite3OsRead(sqlite3_file *id, void *pBuf, int amt, i64 offset){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xRead(id, pBuf, amt, offset);
+}
+SQLITE_PRIVATE int sqlite3OsWrite(sqlite3_file *id, const void *pBuf, int amt, i64 offset){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xWrite(id, pBuf, amt, offset);
+}
+SQLITE_PRIVATE int sqlite3OsTruncate(sqlite3_file *id, i64 size){
+  return id->pMethods->xTruncate(id, size);
+}
+SQLITE_PRIVATE int sqlite3OsSync(sqlite3_file *id, int flags){
+  DO_OS_MALLOC_TEST(id);
+  return flags ? id->pMethods->xSync(id, flags) : SQLITE_OK;
+}
+SQLITE_PRIVATE int sqlite3OsFileSize(sqlite3_file *id, i64 *pSize){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xFileSize(id, pSize);
+}
+SQLITE_PRIVATE int sqlite3OsLock(sqlite3_file *id, int lockType){
+  DO_OS_MALLOC_TEST(id);
+  assert( lockType>=SQLITE_LOCK_SHARED && lockType<=SQLITE_LOCK_EXCLUSIVE );
+  return id->pMethods->xLock(id, lockType);
+}
+SQLITE_PRIVATE int sqlite3OsUnlock(sqlite3_file *id, int lockType){
+  assert( lockType==SQLITE_LOCK_NONE || lockType==SQLITE_LOCK_SHARED );
+  return id->pMethods->xUnlock(id, lockType);
+}
+SQLITE_PRIVATE int sqlite3OsCheckReservedLock(sqlite3_file *id, int *pResOut){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xCheckReservedLock(id, pResOut);
+}
+
+/*
+** Use sqlite3OsFileControl() when we are doing something that might fail
+** and we need to know about the failures.  Use sqlite3OsFileControlHint()
+** when simply tossing information over the wall to the VFS and we do not
+** really care if the VFS receives and understands the information since it
+** is only a hint and can be safely ignored.  The sqlite3OsFileControlHint()
+** routine has no return value since the return value would be meaningless.
+*/
+SQLITE_PRIVATE int sqlite3OsFileControl(sqlite3_file *id, int op, void *pArg){
+  if( id->pMethods==0 ) return SQLITE_NOTFOUND;
+#ifdef SQLITE_TEST
+  if( op!=SQLITE_FCNTL_COMMIT_PHASETWO
+   && op!=SQLITE_FCNTL_LOCK_TIMEOUT
+   && op!=SQLITE_FCNTL_CKPT_DONE
+   && op!=SQLITE_FCNTL_CKPT_START
+  ){
+    /* Faults are not injected into COMMIT_PHASETWO because, assuming SQLite
+    ** is using a regular VFS, it is called after the corresponding
+    ** transaction has been committed. Injecting a fault at this point
+    ** confuses the test scripts - the COMMIT command returns SQLITE_NOMEM
+    ** but the transaction is committed anyway.
+    **
+    ** The core must call OsFileControl() though, not OsFileControlHint(),
+    ** as if a custom VFS (e.g. zipvfs) returns an error here, it probably
+    ** means the commit really has failed and an error should be returned
+    ** to the user.
+    **
+    ** The CKPT_DONE and CKPT_START file-controls are write-only signals
+    ** to the cksumvfs.  Their return code is meaningless and is ignored
+    ** by the SQLite core, so there is no point in simulating OOMs for them.
+    */
+    DO_OS_MALLOC_TEST(id);
+  }
+#endif
+  return id->pMethods->xFileControl(id, op, pArg);
+}
+SQLITE_PRIVATE void sqlite3OsFileControlHint(sqlite3_file *id, int op, void *pArg){
+  if( id->pMethods ) (void)id->pMethods->xFileControl(id, op, pArg);
+}
+
+SQLITE_PRIVATE int sqlite3OsSectorSize(sqlite3_file *id){
+  int (*xSectorSize)(sqlite3_file*) = id->pMethods->xSectorSize;
+  return (xSectorSize ? xSectorSize(id) : SQLITE_DEFAULT_SECTOR_SIZE);
+}
+SQLITE_PRIVATE int sqlite3OsDeviceCharacteristics(sqlite3_file *id){
+  if( NEVER(id->pMethods==0) ) return 0;
+  return id->pMethods->xDeviceCharacteristics(id);
+}
+#ifndef SQLITE_OMIT_WAL
+SQLITE_PRIVATE int sqlite3OsShmLock(sqlite3_file *id, int offset, int n, int flags){
+  return id->pMethods->xShmLock(id, offset, n, flags);
+}
+SQLITE_PRIVATE void sqlite3OsShmBarrier(sqlite3_file *id){
+  id->pMethods->xShmBarrier(id);
+}
+SQLITE_PRIVATE int sqlite3OsShmUnmap(sqlite3_file *id, int deleteFlag){
+  return id->pMethods->xShmUnmap(id, deleteFlag);
+}
+SQLITE_PRIVATE int sqlite3OsShmMap(
+  sqlite3_file *id,               /* Database file handle */
+  int iPage,
+  int pgsz,
+  int bExtend,                    /* True to extend file if necessary */
+  void volatile **pp              /* OUT: Pointer to mapping */
+){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xShmMap(id, iPage, pgsz, bExtend, pp);
+}
+#endif /* SQLITE_OMIT_WAL */
+
+#if SQLITE_MAX_MMAP_SIZE>0
+/* The real implementation of xFetch and xUnfetch */
+SQLITE_PRIVATE int sqlite3OsFetch(sqlite3_file *id, i64 iOff, int iAmt, void **pp){
+  DO_OS_MALLOC_TEST(id);
+  return id->pMethods->xFetch(id, iOff, iAmt, pp);
+}
+SQLITE_PRIVATE int sqlite3OsUnfetch(sqlite3_file *id, i64 iOff, void *p){
+  return id->pMethods->xUnfetch(id, iOff, p);
+}
+#else
+/* No-op stubs to use when memory-mapped I/O is disabled */
+SQLITE_PRIVATE int sqlite3OsFetch(sqlite3_file *id, i64 iOff, int iAmt, void **pp){
+  *pp = 0;
+  return SQLITE_OK;
+}
+SQLITE_PRIVATE int sqlite3OsUnfetch(sqlite3_file *id, i64 iOff, void *p){
+  return SQLITE_OK;
+}
+#endif
+
+/*
+** The next group of routines are convenience wrappers around the
+** VFS methods.
+*/
+SQLITE_PRIVATE int sqlite3OsOpen(
+  sqlite3_vfs *pVfs,
+  const char *zPath,
+  sqlite3_file *pFile,
+  int flags,
+  int *pFlagsOut
+){
+  int rc;
+  DO_OS_MALLOC_TEST(0);
+  /* 0x87f7f is a mask of SQLITE_OPEN_ flags that are valid to be passed
+  ** down into the VFS layer.  Some SQLITE_OPEN_ flags (for example,
+  ** SQLITE_OPEN_FULLMUTEX or SQLITE_OPEN_SHAREDCACHE) are blocked before
+  ** reaching the VFS. */
+  assert( zPath || (flags & SQLITE_OPEN_EXCLUSIVE) );
+  rc = pVfs->xOpen(pVfs, zPath, pFile, flags & 0x1087f7f, pFlagsOut);
+  assert( rc==SQLITE_OK || pFile->pMethods==0 );
+  return rc;
+}
+SQLITE_PRIVATE int sqlite3OsDelete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
+  DO_OS_MALLOC_TEST(0);
+  assert( dirSync==0 || dirSync==1 );
+  return pVfs->xDelete!=0 ? pVfs->xDelete(pVfs, zPath, dirSync) : SQLITE_OK;
+}
+SQLITE_PRIVATE int sqlite3OsAccess(
+  sqlite3_vfs *pVfs,
+  const char *zPath,
+  int flags,
+  int *pResOut
+){
+  DO_OS_MALLOC_TEST(0);
+  return pVfs->xAccess(pVfs, zPath, flags, pResOut);
+}
+SQLITE_PRIVATE int sqlite3OsFullPathname(
+  sqlite3_vfs *pVfs,
+  const char *zPath,
+  int nPathOut,
+  char *zPathOut
+){
+  DO_OS_MALLOC_TEST(0);
+  zPathOut[0] = 0;
+  return pVfs->xFullPathname(pVfs, zPath, nPathOut, zPathOut);
+}
+#ifndef SQLITE_OMIT_LOAD_EXTENSION
+SQLITE_PRIVATE void *sqlite3OsDlOpen(sqlite3_vfs *pVfs, const char *zPath){
+  assert( zPath!=0 );
+  assert( strlen(zPath)<=SQLITE_MAX_PATHLEN );  /* tag-20210611-1 */
+  return pVfs->xDlOpen(pVfs, zPath);
+}
+SQLITE_PRIVATE void sqlite3OsDlError(sqlite3_vfs *pVfs, int nByte, char *zBufOut){
+  pVfs->xDlError(pVfs, nByte, zBufOut);
+}
+SQLITE_PRIVATE void (*sqlite3OsDlSym(sqlite3_vfs *pVfs, void *pHdle, const char *zSym))(void){
+  return pVfs->xDlSym(pVfs, pHdle, zSym);
+}
+SQLITE_PRIVATE void sqlite3OsDlClose(sqlite3_vfs *pVfs, void *pHandle){
+  pVfs->xDlClose(pVfs, pHandle);
+}
+#endif /* SQLITE_OMIT_LOAD_EXTENSION */
+SQLITE_PRIVATE int sqlite3OsRandomness(sqlite3_vfs *pVfs, int nByte, char *zBufOut){
+  if( sqlite3Config.iPrngSeed ){
+    memset(zBufOut, 0, nByte);
+    if( ALWAYS(nByte>(signed)sizeof(unsigned)) ) nByte = sizeof(unsigned int);
+    memcpy(zBufOut, &sqlite3Config.iPrngSeed, nByte);
+    return SQLITE_OK;
+  }else{
+    return pVfs->xRandomness(pVfs, nByte, zBufOut);
+  }
+
+}
+SQLITE_PRIVATE int sqlite3OsSleep(sqlite3_vfs *pVfs, int nMicro){
+  return pVfs->xSleep(pVfs, nMicro);
+}
+SQLITE_PRIVATE int sqlite3OsGetLastError(sqlite3_vfs *pVfs){
+  return pVfs->xGetLastError ? pVfs->xGetLastError(pVfs, 0, 0) : 0;
+}
+SQLITE_PRIVATE int sqlite3OsCurrentTimeInt64(sqlite3_vfs *pVfs, sqlite3_int64 *pTimeOut){
+  int rc;
+  /* IMPLEMENTATION-OF: R-49045-42493 SQLite will use the xCurrentTimeInt64()
+  ** method to get the current date and time if that method is available
+  ** (if iVersion is 2 or greater and the function pointer is not NULL) and
+  ** will fall back to xCurrentTime() if xCurrentTimeInt64() is
+  ** unavailable.
+  */
+  if( pVfs->iVersion>=2 && pVfs->xCurrentTimeInt64 ){
+    rc = pVfs->xCurrentTimeInt64(pVfs, pTimeOut);
+  }else{
+    double r;
+    rc = pVfs->xCurrentTime(pVfs, &r);
+    *pTimeOut = sqlite3RealToI64(r*86400000.0);
+  }
+  return rc;
+}
+
+SQLITE_PRIVATE int sqlite3OsOpenMalloc(
+  sqlite3_vfs *pVfs,
+  const char *zFile,
+  sqlite3_file **ppFile,
+  int flags,
+  int *pOutFlags
+){
+  int rc;
+  sqlite3_file *pFile;
+  pFile = (sqlite3_file *)sqlite3MallocZero(pVfs->szOsFile);
+  if( pFile ){
+    rc = sqlite3OsOpen(pVfs, zFile, pFile, flags, pOutFlags);
+    if( rc!=SQLITE_OK ){
+      sqlite3_free(pFile);
+      *ppFile = 0;
+    }else{
+      *ppFile = pFile;
+    }
+  }else{
+    *ppFile = 0;
+    rc = SQLITE_NOMEM_BKPT;
+  }
+  assert( *ppFile!=0 || rc!=SQLITE_OK );
+  return rc;
+}
+SQLITE_PRIVATE void sqlite3OsCloseFree(sqlite3_file *pFile){
+  assert( pFile );
+  sqlite3OsClose(pFile);
+  sqlite3_free(pFile);
+}
+
+/*
+** This function is a wrapper around the OS specific implementation of
+** sqlite3_os_init(). The purpose of the wrapper is to provide the
+** ability to simulate a malloc failure, so that the handling of an
+** error in sqlite3_os_init() by the upper layers can be tested.
+*/
+SQLITE_PRIVATE int sqlite3OsInit(void){
+  void *p = sqlite3_malloc(10);
+  if( p==0 ) return SQLITE_NOMEM_BKPT;
+  sqlite3_free(p);
+  return sqlite3_os_init();
+}
+
+/*
+** The list of all registered VFS implementations.
+*/
+static sqlite3_vfs * SQLITE_WSD vfsList = 0;
+#define vfsList GLOBAL(sqlite3_vfs *, vfsList)
+
+/*
+** Locate a VFS by name.  If no name is given, simply return the
+** first VFS on the list.
+*/
+SQLITE_API sqlite3_vfs *sqlite3_vfs_find(const char *zVfs){
+  sqlite3_vfs *pVfs = 0;
+#if SQLITE_THREADSAFE
+  sqlite3_mutex *mutex;
+#endif
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return 0;
+#endif
+#if SQLITE_THREADSAFE
+  mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN);
+#endif
+  sqlite3_mutex_enter(mutex);
+  for(pVfs = vfsList; pVfs; pVfs=pVfs->pNext){
+    if( zVfs==0 ) break;
+    if( strcmp(zVfs, pVfs->zName)==0 ) break;
+  }
+  sqlite3_mutex_leave(mutex);
+  return pVfs;
+}
+
+/*
+** Unlink a VFS from the linked list
+*/
+static void vfsUnlink(sqlite3_vfs *pVfs){
+  assert( sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN)) );
+  if( pVfs==0 ){
+    /* No-op */
+  }else if( vfsList==pVfs ){
+    vfsList = pVfs->pNext;
+  }else if( vfsList ){
+    sqlite3_vfs *p = vfsList;
+    while( p->pNext && p->pNext!=pVfs ){
+      p = p->pNext;
+    }
+    if( p->pNext==pVfs ){
+      p->pNext = pVfs->pNext;
+    }
+  }
+}
+
+/*
+** Register a VFS with the system.  It is harmless to register the same
+** VFS multiple times.  The new VFS becomes the default if makeDflt is
+** true.
+*/
+SQLITE_API int sqlite3_vfs_register(sqlite3_vfs *pVfs, int makeDflt){
+  MUTEX_LOGIC(sqlite3_mutex *mutex;)
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return rc;
+#endif
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( pVfs==0 ) return SQLITE_MISUSE_BKPT;
+#endif
+
+  MUTEX_LOGIC( mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN); )
+  sqlite3_mutex_enter(mutex);
+  vfsUnlink(pVfs);
+  if( makeDflt || vfsList==0 ){
+    pVfs->pNext = vfsList;
+    vfsList = pVfs;
+  }else{
+    pVfs->pNext = vfsList->pNext;
+    vfsList->pNext = pVfs;
+  }
+  assert(vfsList);
+  sqlite3_mutex_leave(mutex);
+  return SQLITE_OK;
+}
+
+/*
+** Unregister a VFS so that it is no longer accessible.
+*/
+SQLITE_API int sqlite3_vfs_unregister(sqlite3_vfs *pVfs){
+  MUTEX_LOGIC(sqlite3_mutex *mutex;)
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return rc;
+#endif
+  MUTEX_LOGIC( mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN); )
+  sqlite3_mutex_enter(mutex);
+  vfsUnlink(pVfs);
+  sqlite3_mutex_leave(mutex);
+  return SQLITE_OK;
+}
+
+/************** End of os.c **************************************************/
+/************** Begin file fault.c *******************************************/
+/*
+** 2008 Jan 22
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+*************************************************************************
+**
+** This file contains code to support the concept of "benign"
+** malloc failures (when the xMalloc() or xRealloc() method of the
+** sqlite3_mem_methods structure fails to allocate a block of memory
+** and returns 0).
+**
+** Most malloc failures are non-benign. After they occur, SQLite
+** abandons the current operation and returns an error code (usually
+** SQLITE_NOMEM) to the user. However, sometimes a fault is not necessarily
+** fatal. For example, if a malloc fails while resizing a hash table, this
+** is completely recoverable simply by not carrying out the resize. The
+** hash table will continue to function normally.  So a malloc failure
+** during a hash table resize is a benign fault.
+*/
+
+/* #include "sqliteInt.h" */
+
+#ifndef SQLITE_UNTESTABLE
+
+/*
+** Global variables.
+*/
+typedef struct BenignMallocHooks BenignMallocHooks;
+static SQLITE_WSD struct BenignMallocHooks {
+  void (*xBenignBegin)(void);
+  void (*xBenignEnd)(void);
+} sqlite3Hooks = { 0, 0 };
+
+/* The "wsdHooks" macro will resolve to the appropriate BenignMallocHooks
+** structure.  If writable static data is unsupported on the target,
+** we have to locate the state vector at run-time.  In the more common
+** case where writable static data is supported, wsdHooks can refer directly
+** to the "sqlite3Hooks" state vector declared above.
+*/
+#ifdef SQLITE_OMIT_WSD
+# define wsdHooksInit \
+  BenignMallocHooks *x = &GLOBAL(BenignMallocHooks,sqlite3Hooks)
+# define wsdHooks x[0]
+#else
+# define wsdHooksInit
+# define wsdHooks sqlite3Hooks
+#endif
+
+
+/*
+** Register hooks to call when sqlite3BeginBenignMalloc() and
+** sqlite3EndBenignMalloc() are called, respectively.
+*/
+SQLITE_PRIVATE void sqlite3BenignMallocHooks(
+  void (*xBenignBegin)(void),
+  void (*xBenignEnd)(void)
+){
+  wsdHooksInit;
+  wsdHooks.xBenignBegin = xBenignBegin;
+  wsdHooks.xBenignEnd = xBenignEnd;
+}
+
+/*
+** This (sqlite3EndBenignMalloc()) is called by SQLite code to indicate that
+** subsequent malloc failures are benign. A call to sqlite3EndBenignMalloc()
+** indicates that subsequent malloc failures are non-benign.
+*/
+SQLITE_PRIVATE void sqlite3BeginBenignMalloc(void){
+  wsdHooksInit;
+  if( wsdHooks.xBenignBegin ){
+    wsdHooks.xBenignBegin();
+  }
+}
+SQLITE_PRIVATE void sqlite3EndBenignMalloc(void){
+  wsdHooksInit;
+  if( wsdHooks.xBenignEnd ){
+    wsdHooks.xBenignEnd();
+  }
+}
+
+#endif   /* #ifndef SQLITE_UNTESTABLE */
+
+/************** End of fault.c ***********************************************/
+/************** Begin file mem0.c ********************************************/
+/*
+** 2008 October 28
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+*************************************************************************
+**
+** This file contains a no-op memory allocation drivers for use when
+** SQLITE_ZERO_MALLOC is defined.  The allocation drivers implemented
+** here always fail.  SQLite will not operate with these drivers.  These
+** are merely placeholders.  Real drivers must be substituted using
+** sqlite3_config() before SQLite will operate.
+*/
+/* #include "sqliteInt.h" */
+
+/*
+** This version of the memory allocator is the default.  It is
+** used when no other memory allocator is specified using compile-time
+** macros.
+*/
+#ifdef SQLITE_ZERO_MALLOC
+
+/*
+** No-op versions of all memory allocation routines
+*/
+static void *sqlite3MemMalloc(int nByte){ return 0; }
+static void sqlite3MemFree(void *pPrior){ return; }
+static void *sqlite3MemRealloc(void *pPrior, int nByte){ return 0; }
+static int sqlite3MemSize(void *pPrior){ return 0; }
+static int sqlite3MemRoundup(int n){ return n; }
+static int sqlite3MemInit(void *NotUsed){ return SQLITE_OK; }
+static void sqlite3MemShutdown(void *NotUsed){ return; }
+
+/*
+** This routine is the only routine in this file with external linkage.
+**
+** Populate the low-level memory allocation function pointers in
+** sqlite3GlobalConfig.m with pointers to the routines in this file.
+*/
+SQLITE_PRIVATE void sqlite3MemSetDefault(void){
+  static const sqlite3_mem_methods defaultMethods = {
+     sqlite3MemMalloc,
+     sqlite3MemFree,
+     sqlite3MemRealloc,
+     sqlite3MemSize,
+     sqlite3MemRoundup,
+     sqlite3MemInit,
+     sqlite3MemShutdown,
+     0
+  };
+  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+}
+
+#endif /* SQLITE_ZERO_MALLOC */
+
+/************** End of mem0.c ************************************************/
+/************** Begin file mem1.c ********************************************/
+/*
+** 2007 August 14
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+*************************************************************************
+**
+** This file contains low-level memory allocation drivers for when
+** SQLite will use the standard C-library malloc/realloc/free interface
+** to obtain the memory it needs.
+**
+** This file contains implementations of the low-level memory allocation
+** routines specified in the sqlite3_mem_methods object.  The content of
+** this file is only used if SQLITE_SYSTEM_MALLOC is defined.  The
+** SQLITE_SYSTEM_MALLOC macro is defined automatically if neither the
+** SQLITE_MEMDEBUG nor the SQLITE_WIN32_MALLOC macros are defined.  The
+** default configuration is to use memory allocation routines in this
+** file.
+**
+** C-preprocessor macro summary:
+**
+**    HAVE_MALLOC_USABLE_SIZE     The configure script sets this symbol if
+**                                the malloc_usable_size() interface exists
+**                                on the target platform.  Or, this symbol
+**                                can be set manually, if desired.
+**                                If an equivalent interface exists by
+**                                a different name, using a separate -D
+**                                option to rename it.
+**
+**    SQLITE_WITHOUT_ZONEMALLOC   Some older macs lack support for the zone
+**                                memory allocator.  Set this symbol to enable
+**                                building on older macs.
+**
+**    SQLITE_WITHOUT_MSIZE        Set this symbol to disable the use of
+**                                _msize() on windows systems.  This might
+**                                be necessary when compiling for Delphi,
+**                                for example.
+*/
+/* #include "sqliteInt.h" */
+
+/*
+** This version of the memory allocator is the default.  It is
+** used when no other memory allocator is specified using compile-time
+** macros.
+*/
+#ifdef SQLITE_SYSTEM_MALLOC
+#if defined(__APPLE__) && !defined(SQLITE_WITHOUT_ZONEMALLOC)
+
+/*
+** Use the zone allocator available on apple products unless the
+** SQLITE_WITHOUT_ZONEMALLOC symbol is defined.
+*/
+#include <sys/sysctl.h>
+#include <malloc/malloc.h>
+#ifdef SQLITE_MIGHT_BE_SINGLE_CORE
+#include <libkern/OSAtomic.h>
+#endif /* SQLITE_MIGHT_BE_SINGLE_CORE */
+static malloc_zone_t* _sqliteZone_;
+#define SQLITE_MALLOC(x) malloc_zone_malloc(_sqliteZone_, (x))
+#define SQLITE_FREE(x) malloc_zone_free(_sqliteZone_, (x));
+#define SQLITE_REALLOC(x,y) malloc_zone_realloc(_sqliteZone_, (x), (y))
+#define SQLITE_MALLOCSIZE(x) \
+        (_sqliteZone_ ? _sqliteZone_->size(_sqliteZone_,x) : malloc_size(x))
+
+#else /* if not __APPLE__ */
+
+/*
+** Use standard C library malloc and free on non-Apple systems.
+** Also used by Apple systems if SQLITE_WITHOUT_ZONEMALLOC is defined.
+*/
+#define SQLITE_MALLOC(x)             malloc(x)
+#define SQLITE_FREE(x)               free(x)
+#define SQLITE_REALLOC(x,y)          realloc((x),(y))
+
+/*
+** The malloc.h header file is needed for malloc_usable_size() function
+** on some systems (e.g. Linux).
+*/
+#if HAVE_MALLOC_H && HAVE_MALLOC_USABLE_SIZE
+#  define SQLITE_USE_MALLOC_H 1
+#  define SQLITE_USE_MALLOC_USABLE_SIZE 1
+/*
+** The MSVCRT has malloc_usable_size(), but it is called _msize().  The
+** use of _msize() is automatic, but can be disabled by compiling with
+** -DSQLITE_WITHOUT_MSIZE.  Using the _msize() function also requires
+** the malloc.h header file.
+*/
+#elif defined(_MSC_VER) && !defined(SQLITE_WITHOUT_MSIZE)
+#  define SQLITE_USE_MALLOC_H
+#  define SQLITE_USE_MSIZE
+#endif
+
+/*
+** Include the malloc.h header file, if necessary.  Also set define macro
+** SQLITE_MALLOCSIZE to the appropriate function name, which is _msize()
+** for MSVC and malloc_usable_size() for most other systems (e.g. Linux).
+** The memory size function can always be overridden manually by defining
+** the macro SQLITE_MALLOCSIZE to the desired function name.
+*/
+#if defined(SQLITE_USE_MALLOC_H)
+#  include <malloc.h>
+#  if defined(SQLITE_USE_MALLOC_USABLE_SIZE)
+#    if !defined(SQLITE_MALLOCSIZE)
+#      define SQLITE_MALLOCSIZE(x)   malloc_usable_size(x)
+#    endif
+#  elif defined(SQLITE_USE_MSIZE)
+#    if !defined(SQLITE_MALLOCSIZE)
+#      define SQLITE_MALLOCSIZE      _msize
+#    endif
+#  endif
+#endif /* defined(SQLITE_USE_MALLOC_H) */
+
+#endif /* __APPLE__ or not __APPLE__ */
+
+/*
+** Like malloc(), but remember the size of the allocation
+** so that we can find it later using sqlite3MemSize().
+**
+** For this low-level routine, we are guaranteed that nByte>0 because
+** cases of nByte<=0 will be intercepted and dealt with by higher level
+** routines.
+*/
+static void *sqlite3MemMalloc(int nByte){
+#ifdef SQLITE_MALLOCSIZE
+  void *p;
+  testcase( ROUND8(nByte)==nByte );
+  p = SQLITE_MALLOC( nByte );
+  if( p==0 ){
+    testcase( sqlite3GlobalConfig.xLog!=0 );
+    sqlite3_log(SQLITE_NOMEM, "failed to allocate %u bytes of memory", nByte);
+  }
+  return p;
+#else
+  sqlite3_int64 *p;
+  assert( nByte>0 );
+  testcase( ROUND8(nByte)!=nByte );
+  p = SQLITE_MALLOC( nByte+8 );
+  if( p ){
+    p[0] = nByte;
+    p++;
+  }else{
+    testcase( sqlite3GlobalConfig.xLog!=0 );
+    sqlite3_log(SQLITE_NOMEM, "failed to allocate %u bytes of memory", nByte);
+  }
+  return (void *)p;
+#endif
+}
+
+/*
+** Like free() but works for allocations obtained from sqlite3MemMalloc()
+** or sqlite3MemRealloc().
+**
+** For this low-level routine, we already know that pPrior!=0 since
+** cases where pPrior==0 will have been intercepted and dealt with
+** by higher-level routines.
+*/
+static void sqlite3MemFree(void *pPrior){
+#ifdef SQLITE_MALLOCSIZE
+  SQLITE_FREE(pPrior);
+#else
+  sqlite3_int64 *p = (sqlite3_int64*)pPrior;
+  assert( pPrior!=0 );
+  p--;
+  SQLITE_FREE(p);
+#endif
+}
+
+/*
+** Report the allocated size of a prior return from xMalloc()
+** or xRealloc().
+*/
+static int sqlite3MemSize(void *pPrior){
+#ifdef SQLITE_MALLOCSIZE
+  assert( pPrior!=0 );
+  return (int)SQLITE_MALLOCSIZE(pPrior);
+#else
+  sqlite3_int64 *p;
+  assert( pPrior!=0 );
+  p = (sqlite3_int64*)pPrior;
+  p--;
+  return (int)p[0];
+#endif
+}
+
+/*
+** Like realloc().  Resize an allocation previously obtained from
+** sqlite3MemMalloc().
+**
+** For this low-level interface, we know that pPrior!=0.  Cases where
+** pPrior==0 while have been intercepted by higher-level routine and
+** redirected to xMalloc.  Similarly, we know that nByte>0 because
+** cases where nByte<=0 will have been intercepted by higher-level
+** routines and redirected to xFree.
+*/
+static void *sqlite3MemRealloc(void *pPrior, int nByte){
+#ifdef SQLITE_MALLOCSIZE
+  void *p = SQLITE_REALLOC(pPrior, nByte);
+  if( p==0 ){
+    testcase( sqlite3GlobalConfig.xLog!=0 );
+    sqlite3_log(SQLITE_NOMEM,
+      "failed memory resize %u to %u bytes",
+      SQLITE_MALLOCSIZE(pPrior), nByte);
+  }
+  return p;
+#else
+  sqlite3_int64 *p = (sqlite3_int64*)pPrior;
+  assert( pPrior!=0 && nByte>0 );
+  assert( nByte==ROUND8(nByte) ); /* EV: R-46199-30249 */
+  p--;
+  p = SQLITE_REALLOC(p, nByte+8 );
+  if( p ){
+    p[0] = nByte;
+    p++;
+  }else{
+    testcase( sqlite3GlobalConfig.xLog!=0 );
+    sqlite3_log(SQLITE_NOMEM,
+      "failed memory resize %u to %u bytes",
+      sqlite3MemSize(pPrior), nByte);
+  }
+  return (void*)p;
+#endif
+}
+
+/*
+** Round up a request size to the next valid allocation size.
+*/
+static int sqlite3MemRoundup(int n){
+  return ROUND8(n);
+}
+
+/*
+** Initialize this module.
+*/
+static int sqlite3MemInit(void *NotUsed){
+#if defined(__APPLE__) && !defined(SQLITE_WITHOUT_ZONEMALLOC)
+  int cpuCount;
+  size_t len;
+  if( _sqliteZone_ ){
+    return SQLITE_OK;
+  }
+  len = sizeof(cpuCount);
+  /* One usually wants to use hw.activecpu for MT decisions, but not here */
+  sysctlbyname("hw.ncpu", &cpuCount, &len, NULL, 0);
+  if( cpuCount>1 ){
+    /* defer MT decisions to system malloc */
+    _sqliteZone_ = malloc_default_zone();
+  }else{
+    /* only 1 core, use our own zone to contention over global locks,
+    ** e.g. we have our own dedicated locks */
+    _sqliteZone_ = malloc_create_zone(4096, 0);
+    malloc_set_zone_name(_sqliteZone_, "Sqlite_Heap");
+  }
+#endif /*  defined(__APPLE__) && !defined(SQLITE_WITHOUT_ZONEMALLOC) */
+  UNUSED_PARAMETER(NotUsed);
+  return SQLITE_OK;
+}
+
+/*
+** Deinitialize this module.
+*/
+static void sqlite3MemShutdown(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
+  return;
+}
+
+/*
+** This routine is the only routine in this file with external linkage.
+**
+** Populate the low-level memory allocation function pointers in
+** sqlite3GlobalConfig.m with pointers to the routines in this file.
+*/
+SQLITE_PRIVATE void sqlite3MemSetDefault(void){
+  static const sqlite3_mem_methods defaultMethods = {
+     sqlite3MemMalloc,
+     sqlite3MemFree,
+     sqlite3MemRealloc,
+     sqlite3MemSize,
+     sqlite3MemRoundup,
+     sqlite3MemInit,
+     sqlite3MemShutdown,
+     0
+  };
+  sqlite3_config(SQLITE_CONFIG_MALLOC, &defaultMethods);
+}
+
+#endif /* SQLITE_SYSTEM_MALLOC */
+
+/************** End of mem1.c ************************************************/
+/************** Begin file mem2.c ********************************************/
+/*
+** 2007 August 15
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+*************************************************************************
+**
+** This file contains low-level memory allocation drivers for when
+** SQLite will use the standard C-library malloc/realloc/free interface
+** to obtain the memory it needs while adding lots of additional debugging
+** information to each allocation in order to help detect and fix memory
+** leaks and memory usage errors.
+**
+** This file contains implementations of the low-level memory allocation
+** routines specified in the sqlite3_mem_methods object.
+*/
+/* #include "sqliteInt.h" */
+
+/*
+** This version of the memory allocator is used only if the
+** SQLITE_MEMDEBUG macro is defined
+*/
+#ifdef SQLITE_MEMDEBUG
+
+/*
+** The backtrace functionality is only available with GLIBC
+*/
+#ifdef __GLIBC__
+  extern int backtrace(void**,int);
+  extern void backtrace_symbols_fd(void*const*,int,int);
+#else
+# define backtrace(A,B) 1
+# define backtrace_symbols_fd(A,B,C)
+#endif
+/* #include <stdio.h> */
+
+/*
+** Each memory allocation looks like this:
+**
+**  ------------------------------------------------------------------------
+**  | Title |  backtrace pointers |  MemBlockHdr |  allocation |  EndGuard |
+**  ------------------------------------------------------------------------
+**
+** The application code sees only a pointer to the allocation.  We have
+** to back up from the allocation pointer to find the MemBlockHdr.  The
+** MemBlockHdr tells us the size of the allocation and the number of
+** backtrace pointers.  There is also a guard word at the end of the
+** MemBlockHdr.
+*/
+struct MemBlockHdr {
+  i64 iSize;                          /* Size of this allocation */
+  struct MemBlockHdr *pNext, *pPrev;  /* Linked list of all unfreed memory */
+  char nBacktrace;                    /* Number of backtraces on this alloc */
+  char nBacktraceSlots;               /* Available backtrace slots */
+  u8 nTitle;                          /* Bytes of title; includes '\0' */
+  u8 eType;                           /* Allocation type code */
+  int iForeGuard;                     /* Guard word for sanity */
+};
+
+/*
+** Guard words
+*/
+#define FOREGUARD 0x80F5E153
+#define REARGUARD 0xE4676B53
+
+/*
+** Number of malloc size increments to track.
+*/
+#define NCSIZE  1000
+
+/*
+** All of the static variables used by this module are collected
+** into a single structure named "mem".  This is to keep the
+** static variables organized and to reduce namespace pollution
+** when this module is combined with other in the amalgamation.
+*/
+static struct {
+
+  /*
+  ** Mutex to control access to the memory allocation subsystem.
+  */
+  sqlite3_mutex *mutex;
+
+  /*
+  ** Head and tail of a linked list of all outstanding allocations
+  */
+  struct MemBlockHdr *pFirst;
+  struct MemBlockHdr *pLast;
+
+  /*
+  ** The number of levels of backtrace to save in new allocations.
+  */
+  int nBacktrace;
+  void (*xBacktrace)(int, int, void **);
+
+  /*
+  ** Title text to insert in front of each block
+  */
+  int nTitle;        /* Bytes of zTitle to save.  Includes '\0' and padding */
+  char zTitle[100];  /* The title text */
+
+  /*
+  ** sqlite3MallocDisallow() increments the following counter.
+  ** sqlite3MallocAllow() decrements it.
+  */
+  int disallow; /* Do not allow memory allocation */
+
+  /*
+  ** Gather statistics on the sizes of memory allocations.
+  ** nAlloc[i] is the number of allocation attempts of i*8
+  ** bytes.  i==NCSIZE is the number of allocation attempts for
+  ** sizes more than NCSIZE*8 bytes.
+  */
+  int nAlloc[NCSIZE];      /* Total number of allocations */
+  int nCurrent[NCSIZE];    /* Current number of allocations */
+  int mxCurrent[NCSIZE];   /* Highwater mark for nCurrent */
+
+} mem;
+
+
+/*
+** Adjust memory usage statistics
+*/
+static void adjustStats(int iSize, int increment){
+  int i = ROUND8(iSize)/8;
+  if( i>NCSIZE-1 ){
+    i = NCSIZE - 1;
+  }
+  if( increment>0 ){
+    mem.nAlloc[i]++;
+    mem.nCurrent[i]++;
+    if( mem.nCurrent[i]>mem.mxCurrent[i] ){
+      mem.mxCurrent[i] = mem.nCurrent[i];
+    }
+  }else{
+    mem.nCurrent[i]--;
+    assert( mem.nCurrent[i]>=0 );
+  }
+}
+
+/*
+** Given an allocation, find the MemBlockHdr for that allocation.
+**
+** This routine checks the guards at either end of the allocation and
+** if they are incorrect it asserts.
+*/
+static struct MemBlockHdr *sqlite3MemsysGetHeader(const void *pAllocation){
+  struct MemBlockHdr *p;
+  int *pInt;
+  u8 *pU8;
+  int nReserve;
+
+  p = (struct MemBlockHdr*)pAllocation;
+  p--;
+  assert( p->iForeGuard==(int)FOREGUARD );
+  nReserve = ROUND8(p->iSize);
+  pInt = (int*)pAllocation;
+  pU8 = (u8*)pAllocation;
+  assert( pInt[nReserve/sizeof(int)]==(int)REARGUARD );
+  /* This checks any of the "extra" bytes allocated due
+  ** to rounding up to an 8 byte boundary to ensure
+  ** they haven't been overwritten.
+  */
+  while( nReserve-- > p->iSize ) assert( pU8[nReserve]==0x65 );
+  return p;
+}
+
+/*
+** Return the number of bytes currently allocated at address p.
+*/
+static int sqlite3MemSize(void *p){
+  struct MemBlockHdr *pHdr;
+  if( !p ){
+    return 0;
+  }
+  pHdr = sqlite3MemsysGetHeader(p);
+  return (int)pHdr->iSize;
+}
+
+/*
+** Initialize the memory allocation subsystem.
+*/
+static int sqlite3MemInit(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
+  assert( (sizeof(struct MemBlockHdr)&7) == 0 );
+  if( !sqlite3GlobalConfig.bMemstat ){
+    /* If memory status is enabled, then the malloc.c wrapper will already
+    ** hold the STATIC_MEM mutex when the routines here are invoked. */
+    mem.mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM);
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Deinitialize the memory allocation subsystem.
+*/
+static void sqlite3MemShutdown(void *NotUsed){
+  UNUSED_PARAMETER(NotUsed);
+  mem.mutex = 0;
+}
+
+/*
+** Round up a request size to the next valid allocation size.
+*/
+static int sqlite3MemRoundup(int n){
+  return ROUND8(n);
+}
+
+/*
+** Fill a buffer with pseudo-random bytes.  This is used to preset
+** the content of a new memory allocation to unpredictable values and
+** to clear the content of a freed allocation to unpredictable values.
+*/
+static void randomFill(char *pBuf, int nByte){
+  unsigned int x, y, r;
+  x = SQLITE_PTR_TO_INT(pBuf);
+  y = nByte | 1;
+  while( nByte >= 4 ){
+    x = (x>>1) ^ (-(int)(x&1) & 0xd0000001);
+    y = y*1103515245 + 12345;
+    r = x ^ y;
+    *(int*)pBuf = r;
+    pBuf += 4;
+    nByte -= 4;
+  }
+  while( nByte-- > 0 ){
+    x = (x>>1) ^ (-(int)(x&1) & 0xd0000001);
+    y = y*1103515245 + 12345;
+    r = x ^ y;
+    *(pBuf++) = r & 0xff;
+  }
+}
+
+/*
+** Allocate nByte bytes of memory.
+*/
+static void *sqlite3MemMalloc(int nByte){
+  struct MemBlockHdr *pHdr;
+  void **pBt;
+  char *z;
+  int *pInt;
+  void *p = 0;
+  int totalSize;
+  int nReserve;
+  sqlite3_mutex_enter(mem.mutex);
+  assert( mem.disallow==0 );
+  nReserve = ROUND8(nByte);
+  totalSize = nReserve + sizeof(*pHdr) + sizeof(int) +
+               mem.nBacktrace*sizeof(void*) + mem.nTitle;
+  p = malloc(totalSize);
+  if( p ){
+    z = p;
+    pBt = (void**)&z[mem.nTitle];
+    pHdr = (struct MemBlockHdr*)&pBt[mem.nBacktrace];
+    pHdr->pNext = 0;
+    pHdr->pPrev = mem.pLast;
+    if( mem.pLast ){
+      mem.pLast->pNext = pHdr;
+    }else{
+      mem.pFirst = pHdr;
+    }
+    mem.pLast = pHdr;
+    pHdr->iForeGuard = FOREGUARD;
+    pHdr->eType = MEMTYPE_HEAP;
+    pHdr->nBacktraceSlots = mem.nBacktrace;
+    pHdr->nTitle = mem.nTitle;
+    if( mem.nBacktrace ){
+      void *aAddr[40];
+      pHdr->nBacktrace = backtrace(aAddr, mem.nBacktrace+1)-1;
+      memcpy(pBt, &aAddr[1], pHdr->nBacktrace*sizeof(void*));
+      assert(pBt[0]);
+      if( mem.xBacktrace ){
+        mem.xBacktrace(nByte, pHdr->nBacktrace-1, &aAddr[1]);
+      }
+    }else{
+      pHdr->nBacktrace = 0;
+    }
+    if( mem.nTitle ){
+      memcpy(z, mem.zTitle, mem.nTitle);
+    }
+    pHdr->iSize = nByte;
+    adjustStats(nByte, +1);
+    pInt = (int*)&pHdr[1];
+    pInt[nReserve/sizeof(int)] = REARGUARD;
+    randomFill((char*)pInt, nByte);
+    memset(((char*)pInt)+nByte, 0x65, nReserve-nByte);
+    p = (void*)pInt;
+  }
+  sqlite3_mutex_leave(mem.mutex);
+  return p;
+}
+
+/*
+** Free memory.
+*/
+static void sqlite3MemFree(void *pPrior){
+  struct MemBlockHdr *pHdr;
+  void **pBt;
+  char *z;
+  assert( sqlite3GlobalConfig.bMemstat || sqlite3GlobalConfig.bCoreMutex==0
+       || mem.mutex!=0 );
+  pHdr = sqlite3MemsysGetHeader(pPrior);
+  pBt = (void**)pHdr;
+  pBt -= pHdr->nBacktraceSlots;
+  sqlite3_mutex_enter(mem.mutex);
+  if( pHdr->pPrev ){
+    assert( pHdr->pPrev->pNext==pHdr );
+    pHdr->pPrev->pNext = pHdr->pNext;
+  }else{
+    assert( mem.pFirst==pHdr );
+    mem.pFirst = pHdr->pNext;
+  }
+  if( pHdr->pNext ){
+    assert( pHdr->pNext->pPrev==pHdr );
+    pHdr->pNext->pPrev = pHdr->pPrev;
+  }else{

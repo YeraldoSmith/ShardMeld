@@ -1,0 +1,25 @@
+[package]
+name = "meld-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+hex.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+tempfile.workspace = true
+ureq.workspace = true
+url.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

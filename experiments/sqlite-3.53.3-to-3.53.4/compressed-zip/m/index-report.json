@@ -1,0 +1,17 @@
+{
+  "source": "<WORKSPACE>/work/real-benchmark/sqlite/sources/zip",
+  "database": "outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/compressed-zip/m/index.db",
+  "profile": {
+    "min_size": 16384,
+    "avg_size": 65536,
+    "max_size": 262144
+  },
+  "files_indexed": 1,
+  "bytes_indexed": 2945929,
+  "chunks_indexed": 33,
+  "database_bytes": 65536,
+  "index_overhead_ratio": 0.02224629310482364,
+  "elapsed_ms": 9,
+  "bytes_per_second": 303528005.6668169,
+  "skipped_entries": []
+}

@@ -1,0 +1,9 @@
+{
+  "peer": "127.0.0.1:45983",
+  "output_directory": "outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/network-raw-m/fetched",
+  "missing_chunk_occurrences": 15,
+  "unique_chunks_needed": 15,
+  "chunks_fetched": 15,
+  "bytes_fetched": 1241862,
+  "existing_verified_chunks": 0
+}

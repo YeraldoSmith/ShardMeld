@@ -1,0 +1,10 @@
+{
+  "output": "outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/compressed-zip/m/rebuilt.bin",
+  "target_bytes": 2946650,
+  "local_bytes_read": 0,
+  "missing_source_bytes_read": 2946650,
+  "local_chunk_occurrences": 0,
+  "missing_chunk_occurrences": 37,
+  "output_sha256": "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d",
+  "verified": true
+}

@@ -1,0 +1,4432 @@
+e3_changeset_iter *p,      /* Changeset iterator */
+  u8 **paRec,                     /* If non-NULL, store record pointer here */
+  int *pnRec,                     /* If non-NULL, store size of record here */
+  int *pbNew                      /* If non-NULL, true if new table */
+){
+  int bEmpty;
+  int rc;
+  do {
+    bEmpty = 0;
+    rc = sessionChangesetNextOne(p, paRec, pnRec, pbNew, &bEmpty);
+  }while( rc==SQLITE_ROW && p->bSkipEmpty && bEmpty);
+  return rc;
+}
+
+/*
+** Advance an iterator created by sqlite3changeset_start() to the next
+** change in the changeset. This function may return SQLITE_ROW, SQLITE_DONE
+** or SQLITE_CORRUPT.
+**
+** This function may not be called on iterators passed to a conflict handler
+** callback by changeset_apply().
+*/
+SQLITE_API int sqlite3changeset_next(sqlite3_changeset_iter *p){
+  return sessionChangesetNext(p, 0, 0, 0);
+}
+
+/*
+** The following function extracts information on the current change
+** from a changeset iterator. It may only be called after changeset_next()
+** has returned SQLITE_ROW.
+*/
+SQLITE_API int sqlite3changeset_op(
+  sqlite3_changeset_iter *pIter,  /* Iterator handle */
+  const char **pzTab,             /* OUT: Pointer to table name */
+  int *pnCol,                     /* OUT: Number of columns in table */
+  int *pOp,                       /* OUT: SQLITE_INSERT, DELETE or UPDATE */
+  int *pbIndirect                 /* OUT: True if change is indirect */
+){
+  *pOp = pIter->op;
+  *pnCol = pIter->nCol;
+  *pzTab = pIter->zTab;
+  if( pbIndirect ) *pbIndirect = pIter->bIndirect;
+  return SQLITE_OK;
+}
+
+/*
+** Return information regarding the PRIMARY KEY and number of columns in
+** the database table affected by the change that pIter currently points
+** to. This function may only be called after changeset_next() returns
+** SQLITE_ROW.
+*/
+SQLITE_API int sqlite3changeset_pk(
+  sqlite3_changeset_iter *pIter,  /* Iterator object */
+  unsigned char **pabPK,          /* OUT: Array of boolean - true for PK cols */
+  int *pnCol                      /* OUT: Number of entries in output array */
+){
+  *pabPK = pIter->abPK;
+  if( pnCol ) *pnCol = pIter->nCol;
+  return SQLITE_OK;
+}
+
+/*
+** This function may only be called while the iterator is pointing to an
+** SQLITE_UPDATE or SQLITE_DELETE change (see sqlite3changeset_op()).
+** Otherwise, SQLITE_MISUSE is returned.
+**
+** It sets *ppValue to point to an sqlite3_value structure containing the
+** iVal'th value in the old.* record. Or, if that particular value is not
+** included in the record (because the change is an UPDATE and the field
+** was not modified and is not a PK column), set *ppValue to NULL.
+**
+** If value iVal is out-of-range, SQLITE_RANGE is returned and *ppValue is
+** not modified. Otherwise, SQLITE_OK.
+*/
+SQLITE_API int sqlite3changeset_old(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  int iVal,                       /* Index of old.* value to retrieve */
+  sqlite3_value **ppValue         /* OUT: Old value (or NULL pointer) */
+){
+  if( pIter->op!=SQLITE_UPDATE && pIter->op!=SQLITE_DELETE ){
+    return SQLITE_MISUSE;
+  }
+  if( iVal<0 || iVal>=pIter->nCol ){
+    return SQLITE_RANGE;
+  }
+  *ppValue = pIter->apValue[iVal];
+  return SQLITE_OK;
+}
+
+/*
+** This function may only be called while the iterator is pointing to an
+** SQLITE_UPDATE or SQLITE_INSERT change (see sqlite3changeset_op()).
+** Otherwise, SQLITE_MISUSE is returned.
+**
+** It sets *ppValue to point to an sqlite3_value structure containing the
+** iVal'th value in the new.* record. Or, if that particular value is not
+** included in the record (because the change is an UPDATE and the field
+** was not modified), set *ppValue to NULL.
+**
+** If value iVal is out-of-range, SQLITE_RANGE is returned and *ppValue is
+** not modified. Otherwise, SQLITE_OK.
+*/
+SQLITE_API int sqlite3changeset_new(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  int iVal,                       /* Index of new.* value to retrieve */
+  sqlite3_value **ppValue         /* OUT: New value (or NULL pointer) */
+){
+  if( pIter->op!=SQLITE_UPDATE && pIter->op!=SQLITE_INSERT ){
+    return SQLITE_MISUSE;
+  }
+  if( iVal<0 || iVal>=pIter->nCol ){
+    return SQLITE_RANGE;
+  }
+  *ppValue = pIter->apValue[pIter->nCol+iVal];
+  return SQLITE_OK;
+}
+
+/*
+** The following two macros are used internally. They are similar to the
+** sqlite3changeset_new() and sqlite3changeset_old() functions, except that
+** they omit all error checking and return a pointer to the requested value.
+*/
+#define sessionChangesetNew(pIter, iVal) (pIter)->apValue[(pIter)->nCol+(iVal)]
+#define sessionChangesetOld(pIter, iVal) (pIter)->apValue[(iVal)]
+
+/*
+** This function may only be called with a changeset iterator that has been
+** passed to an SQLITE_CHANGESET_DATA or SQLITE_CHANGESET_CONFLICT
+** conflict-handler function. Otherwise, SQLITE_MISUSE is returned.
+**
+** If successful, *ppValue is set to point to an sqlite3_value structure
+** containing the iVal'th value of the conflicting record.
+**
+** If value iVal is out-of-range or some other error occurs, an SQLite error
+** code is returned. Otherwise, SQLITE_OK.
+*/
+SQLITE_API int sqlite3changeset_conflict(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  int iVal,                       /* Index of conflict record value to fetch */
+  sqlite3_value **ppValue         /* OUT: Value from conflicting row */
+){
+  if( !pIter->pConflict ){
+    return SQLITE_MISUSE;
+  }
+  if( iVal<0 || iVal>=pIter->nCol ){
+    return SQLITE_RANGE;
+  }
+  *ppValue = sqlite3_column_value(pIter->pConflict, iVal);
+  return SQLITE_OK;
+}
+
+/*
+** This function may only be called with an iterator passed to an
+** SQLITE_CHANGESET_FOREIGN_KEY conflict handler callback. In this case
+** it sets the output variable to the total number of known foreign key
+** violations in the destination database and returns SQLITE_OK.
+**
+** In all other cases this function returns SQLITE_MISUSE.
+*/
+SQLITE_API int sqlite3changeset_fk_conflicts(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  int *pnOut                      /* OUT: Number of FK violations */
+){
+  if( pIter->pConflict || pIter->apValue ){
+    return SQLITE_MISUSE;
+  }
+  *pnOut = pIter->nCol;
+  return SQLITE_OK;
+}
+
+
+/*
+** Finalize an iterator allocated with sqlite3changeset_start().
+**
+** This function may not be called on iterators passed to a conflict handler
+** callback by changeset_apply().
+*/
+SQLITE_API int sqlite3changeset_finalize(sqlite3_changeset_iter *p){
+  int rc = SQLITE_OK;
+  if( p ){
+    int i;                        /* Used to iterate through p->apValue[] */
+    rc = p->rc;
+    if( p->apValue ){
+      for(i=0; i<p->nCol*2; i++) sqlite3ValueFree(p->apValue[i]);
+    }
+    sqlite3_free(p->tblhdr.aBuf);
+    sqlite3_free(p->in.buf.aBuf);
+    sqlite3_free(p);
+  }
+  return rc;
+}
+
+static int sessionChangesetInvert(
+  SessionInput *pInput,           /* Input changeset */
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut,
+  int *pnInverted,                /* OUT: Number of bytes in output changeset */
+  void **ppInverted               /* OUT: Inverse of pChangeset */
+){
+  int rc = SQLITE_OK;             /* Return value */
+  SessionBuffer sOut;             /* Output buffer */
+  int nCol = 0;                   /* Number of cols in current table */
+  u8 *abPK = 0;                   /* PK array for current table */
+  sqlite3_value **apVal = 0;      /* Space for values for UPDATE inversion */
+  SessionBuffer sPK = {0, 0, 0};  /* PK array for current table */
+
+  /* Initialize the output buffer */
+  memset(&sOut, 0, sizeof(SessionBuffer));
+
+  /* Zero the output variables in case an error occurs. */
+  if( ppInverted ){
+    *ppInverted = 0;
+    *pnInverted = 0;
+  }
+
+  while( 1 ){
+    u8 eType;
+
+    /* Test for EOF. */
+    if( (rc = sessionInputBuffer(pInput, 2)) ) goto finished_invert;
+    if( pInput->iNext+1>=pInput->nData ){
+      if( pInput->iNext!=pInput->nData ){
+        rc = SQLITE_CORRUPT_BKPT;
+        goto finished_invert;
+      }
+      break;
+    }
+    eType = pInput->aData[pInput->iNext];
+
+    switch( eType ){
+      case 'T': {
+        /* A 'table' record consists of:
+        **
+        **   * A constant 'T' character,
+        **   * Number of columns in said table (a varint),
+        **   * An array of nCol bytes (sPK),
+        **   * A nul-terminated table name.
+        */
+        int nByte;
+        int nVar;
+        pInput->iNext++;
+        if( (rc = sessionChangesetBufferTblhdr(pInput, &nByte)) ){
+          goto finished_invert;
+        }
+        nVar = sessionVarintGet(&pInput->aData[pInput->iNext], &nCol);
+        sPK.nBuf = 0;
+        sessionAppendBlob(&sPK, &pInput->aData[pInput->iNext+nVar], nCol, &rc);
+        sessionAppendByte(&sOut, eType, &rc);
+        sessionAppendBlob(&sOut, &pInput->aData[pInput->iNext], nByte, &rc);
+        if( rc ) goto finished_invert;
+
+        pInput->iNext += nByte;
+        sqlite3_free(apVal);
+        apVal = 0;
+        abPK = sPK.aBuf;
+        break;
+      }
+
+      case SQLITE_INSERT:
+      case SQLITE_DELETE: {
+        int nByte;
+        int bIndirect = pInput->aData[pInput->iNext+1];
+        int eType2 = (eType==SQLITE_DELETE ? SQLITE_INSERT : SQLITE_DELETE);
+        pInput->iNext += 2;
+        assert( rc==SQLITE_OK );
+        rc = sessionChangesetBufferRecord(pInput, nCol, &nByte);
+        sessionAppendByte(&sOut, eType2, &rc);
+        sessionAppendByte(&sOut, bIndirect, &rc);
+        sessionAppendBlob(&sOut, &pInput->aData[pInput->iNext], nByte, &rc);
+        pInput->iNext += nByte;
+        if( rc ) goto finished_invert;
+        break;
+      }
+
+      case SQLITE_UPDATE: {
+        int iCol;
+
+        if( 0==apVal ){
+          apVal = (sqlite3_value **)sqlite3_malloc64(sizeof(apVal[0])*nCol*2);
+          if( 0==apVal ){
+            rc = SQLITE_NOMEM;
+            goto finished_invert;
+          }
+          memset(apVal, 0, sizeof(apVal[0])*nCol*2);
+        }
+
+        /* Write the header for the new UPDATE change. Same as the original. */
+        sessionAppendByte(&sOut, eType, &rc);
+        sessionAppendByte(&sOut, pInput->aData[pInput->iNext+1], &rc);
+
+        /* Read the old.* and new.* records for the update change. */
+        pInput->iNext += 2;
+        rc = sessionReadRecord(pInput, nCol, 0, &apVal[0], 0);
+        if( rc==SQLITE_OK ){
+          rc = sessionReadRecord(pInput, nCol, 0, &apVal[nCol], 0);
+        }
+
+        /* Write the new old.* record. Consists of the PK columns from the
+        ** original old.* record, and the other values from the original
+        ** new.* record. */
+        for(iCol=0; iCol<nCol; iCol++){
+          sqlite3_value *pVal = apVal[iCol + (abPK[iCol] ? 0 : nCol)];
+          sessionAppendValue(&sOut, pVal, &rc);
+        }
+
+        /* Write the new new.* record. Consists of a copy of all values
+        ** from the original old.* record, except for the PK columns, which
+        ** are set to "undefined". */
+        for(iCol=0; iCol<nCol; iCol++){
+          sqlite3_value *pVal = (abPK[iCol] ? 0 : apVal[iCol]);
+          sessionAppendValue(&sOut, pVal, &rc);
+        }
+
+        for(iCol=0; iCol<nCol*2; iCol++){
+          sqlite3ValueFree(apVal[iCol]);
+        }
+        memset(apVal, 0, sizeof(apVal[0])*nCol*2);
+        if( rc!=SQLITE_OK ){
+          goto finished_invert;
+        }
+
+        break;
+      }
+
+      default:
+        rc = SQLITE_CORRUPT_BKPT;
+        goto finished_invert;
+    }
+
+    assert( rc==SQLITE_OK );
+    if( xOutput && sOut.nBuf>=sessions_strm_chunk_size ){
+      rc = xOutput(pOut, sOut.aBuf, sOut.nBuf);
+      sOut.nBuf = 0;
+      if( rc!=SQLITE_OK ) goto finished_invert;
+    }
+  }
+
+  assert( rc==SQLITE_OK );
+  if( pnInverted && ALWAYS(ppInverted) ){
+    *pnInverted = sOut.nBuf;
+    *ppInverted = sOut.aBuf;
+    sOut.aBuf = 0;
+  }else if( sOut.nBuf>0 && ALWAYS(xOutput!=0) ){
+    rc = xOutput(pOut, sOut.aBuf, sOut.nBuf);
+  }
+
+ finished_invert:
+  sqlite3_free(sOut.aBuf);
+  sqlite3_free(apVal);
+  sqlite3_free(sPK.aBuf);
+  return rc;
+}
+
+
+/*
+** Invert a changeset object.
+*/
+SQLITE_API int sqlite3changeset_invert(
+  int nChangeset,                 /* Number of bytes in input */
+  const void *pChangeset,         /* Input changeset */
+  int *pnInverted,                /* OUT: Number of bytes in output changeset */
+  void **ppInverted               /* OUT: Inverse of pChangeset */
+){
+  SessionInput sInput;
+
+  /* Set up the input stream */
+  memset(&sInput, 0, sizeof(SessionInput));
+  sInput.nData = nChangeset;
+  sInput.aData = (u8*)pChangeset;
+
+  return sessionChangesetInvert(&sInput, 0, 0, pnInverted, ppInverted);
+}
+
+/*
+** Streaming version of sqlite3changeset_invert().
+*/
+SQLITE_API int sqlite3changeset_invert_strm(
+  int (*xInput)(void *pIn, void *pData, int *pnData),
+  void *pIn,
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut
+){
+  SessionInput sInput;
+  int rc;
+
+  /* Set up the input stream */
+  memset(&sInput, 0, sizeof(SessionInput));
+  sInput.xInput = xInput;
+  sInput.pIn = pIn;
+
+  rc = sessionChangesetInvert(&sInput, xOutput, pOut, 0, 0);
+  sqlite3_free(sInput.buf.aBuf);
+  return rc;
+}
+
+
+typedef struct SessionUpdate SessionUpdate;
+struct SessionUpdate {
+  sqlite3_stmt *pStmt;
+  u32 *aMask;
+  SessionUpdate *pNext;
+};
+
+typedef struct SessionApplyCtx SessionApplyCtx;
+struct SessionApplyCtx {
+  sqlite3 *db;
+  sqlite3_stmt *pDelete;          /* DELETE statement */
+  sqlite3_stmt *pInsert;          /* INSERT statement */
+  sqlite3_stmt *pSelect;          /* SELECT statement */
+  int nCol;                       /* Size of azCol[] and abPK[] arrays */
+  const char **azCol;             /* Array of column names */
+  u8 *abPK;                       /* Boolean array - true if column is in PK */
+  u32 *aUpdateMask;               /* Used by sessionUpdateFind */
+  SessionUpdate *pUp;
+  int bStat1;                     /* True if table is sqlite_stat1 */
+  int bDeferConstraints;          /* True to defer constraints */
+  int bInvertConstraints;         /* Invert when iterating constraints buffer */
+  SessionBuffer constraints;      /* Deferred constraints are stored here */
+  SessionBuffer rebase;           /* Rebase information (if any) here */
+  u8 bRebaseStarted;              /* If table header is already in rebase */
+  u8 bRebase;                     /* True to collect rebase information */
+  u8 bIgnoreNoop;                 /* True to ignore no-op conflicts */
+  u8 bNoUpdateLoop;               /* No update-loop processing */
+  int bRowid;
+  char *zErr;                     /* Error message, if any */
+};
+
+/* Number of prepared UPDATE statements to cache. */
+#define SESSION_UPDATE_CACHE_SZ 12
+
+/*
+** Find a prepared UPDATE statement suitable for the UPDATE step currently
+** being visited by the iterator. The UPDATE is of the form:
+**
+**   UPDATE tbl SET col = ?, col2 = ? WHERE pk1 IS ? AND pk2 IS ?
+*/
+static int sessionUpdateFind(
+  sqlite3_changeset_iter *pIter,
+  SessionApplyCtx *p,
+  int bPatchset,
+  sqlite3_stmt **ppStmt
+){
+  int rc = SQLITE_OK;
+  SessionUpdate *pUp = 0;
+  int nCol = pIter->nCol;
+  int nU32 = (pIter->nCol+33)/32;
+  int ii;
+
+  if( p->aUpdateMask==0 ){
+    p->aUpdateMask = sqlite3_malloc(nU32*sizeof(u32));
+    if( p->aUpdateMask==0 ){
+      rc = SQLITE_NOMEM;
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    memset(p->aUpdateMask, 0, nU32*sizeof(u32));
+    rc = SQLITE_CORRUPT;
+    for(ii=0; ii<pIter->nCol; ii++){
+      if( sessionChangesetNew(pIter, ii) ){
+        p->aUpdateMask[ii/32] |= (1<<(ii%32));
+        rc = SQLITE_OK;
+      }
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    if( bPatchset ) p->aUpdateMask[nCol/32] |= (1<<(nCol%32));
+
+    if( p->pUp ){
+      int nUp = 0;
+      SessionUpdate **pp = &p->pUp;
+      while( 1 ){
+        nUp++;
+        if( 0==memcmp(p->aUpdateMask, (*pp)->aMask, nU32*sizeof(u32)) ){
+          pUp = *pp;
+          *pp = pUp->pNext;
+          pUp->pNext = p->pUp;
+          p->pUp = pUp;
+          break;
+        }
+
+        if( (*pp)->pNext ){
+          pp = &(*pp)->pNext;
+        }else{
+          if( nUp>=SESSION_UPDATE_CACHE_SZ ){
+            sqlite3_finalize((*pp)->pStmt);
+            sqlite3_free(*pp);
+            *pp = 0;
+          }
+          break;
+        }
+      }
+    }
+
+    if( pUp==0 ){
+      int nByte = sizeof(SessionUpdate) * nU32*sizeof(u32);
+      int bStat1 = (sqlite3_stricmp(pIter->zTab, "sqlite_stat1")==0);
+      pUp = (SessionUpdate*)sqlite3_malloc(nByte);
+      if( pUp==0 ){
+        rc = SQLITE_NOMEM;
+      }else{
+        const char *zSep = "";
+        SessionBuffer buf;
+
+        memset(&buf, 0, sizeof(buf));
+        pUp->aMask = (u32*)&pUp[1];
+        memcpy(pUp->aMask, p->aUpdateMask, nU32*sizeof(u32));
+
+        sessionAppendStr(&buf, "UPDATE main.", &rc);
+        sessionAppendIdent(&buf, pIter->zTab, &rc);
+        sessionAppendStr(&buf, " SET ", &rc);
+
+        /* Create the assignments part of the UPDATE */
+        for(ii=0; ii<pIter->nCol; ii++){
+          if( p->abPK[ii]==0 && sessionChangesetNew(pIter, ii) ){
+            sessionAppendStr(&buf, zSep, &rc);
+            sessionAppendIdent(&buf, p->azCol[ii], &rc);
+            sessionAppendStr(&buf, " = ?", &rc);
+            sessionAppendInteger(&buf, ii*2+1, &rc);
+            zSep = ", ";
+          }
+        }
+
+        /* Create the WHERE clause part of the UPDATE */
+        zSep = "";
+        sessionAppendStr(&buf, " WHERE ", &rc);
+        for(ii=0; ii<pIter->nCol; ii++){
+          if( p->abPK[ii] || (bPatchset==0 && sessionChangesetOld(pIter, ii)) ){
+            sessionAppendStr(&buf, zSep, &rc);
+            if( bStat1 && ii==1 ){
+              assert( sqlite3_stricmp(p->azCol[ii], "idx")==0 );
+              sessionAppendStr(&buf,
+                  "idx IS CASE "
+                  "WHEN length(?4)=0 AND typeof(?4)='blob' THEN NULL "
+                  "ELSE ?4 END ", &rc
+              );
+            }else{
+              sessionAppendIdent(&buf, p->azCol[ii], &rc);
+              sessionAppendStr(&buf, " IS ?", &rc);
+              sessionAppendInteger(&buf, ii*2+2, &rc);
+            }
+            zSep = " AND ";
+          }
+        }
+
+        if( rc==SQLITE_OK ){
+          char *zSql = (char*)buf.aBuf;
+          rc = sqlite3_prepare_v2(p->db, zSql, buf.nBuf, &pUp->pStmt, 0);
+        }
+
+        if( rc!=SQLITE_OK ){
+          sqlite3_free(pUp);
+          pUp = 0;
+        }else{
+          pUp->pNext = p->pUp;
+          p->pUp = pUp;
+        }
+        sqlite3_free(buf.aBuf);
+      }
+    }
+  }
+
+  assert( (rc==SQLITE_OK)==(pUp!=0) );
+  if( pUp ){
+    *ppStmt = pUp->pStmt;
+  }else{
+    *ppStmt = 0;
+  }
+  return rc;
+}
+
+/*
+** Free all cached UPDATE statements.
+*/
+static void sessionUpdateFree(SessionApplyCtx *p){
+  SessionUpdate *pUp;
+  SessionUpdate *pNext;
+  for(pUp=p->pUp; pUp; pUp=pNext){
+    pNext = pUp->pNext;
+    sqlite3_finalize(pUp->pStmt);
+    sqlite3_free(pUp);
+  }
+  p->pUp = 0;
+  sqlite3_free(p->aUpdateMask);
+  p->aUpdateMask = 0;
+}
+
+/*
+** Formulate a statement to DELETE a row from database db. Assuming a table
+** structure like this:
+**
+**     CREATE TABLE x(a, b, c, d, PRIMARY KEY(a, c));
+**
+** The DELETE statement looks like this:
+**
+**     DELETE FROM x WHERE a = :1 AND c = :3 AND (:5 OR b IS :2 AND d IS :4)
+**
+** Variable :5 (nCol+1) is a boolean. It should be set to 0 if we require
+** matching b and d values, or 1 otherwise. The second case comes up if the
+** conflict handler is invoked with NOTFOUND and returns CHANGESET_REPLACE.
+**
+** If successful, SQLITE_OK is returned and SessionApplyCtx.pDelete is left
+** pointing to the prepared version of the SQL statement.
+*/
+static int sessionDeleteRow(
+  sqlite3 *db,                    /* Database handle */
+  const char *zTab,               /* Table name */
+  SessionApplyCtx *p              /* Session changeset-apply context */
+){
+  int i;
+  const char *zSep = "";
+  int rc = SQLITE_OK;
+  SessionBuffer buf = {0, 0, 0};
+  int nPk = 0;
+
+  sessionAppendStr(&buf, "DELETE FROM main.", &rc);
+  sessionAppendIdent(&buf, zTab, &rc);
+  sessionAppendStr(&buf, " WHERE ", &rc);
+
+  for(i=0; i<p->nCol; i++){
+    if( p->abPK[i] ){
+      nPk++;
+      sessionAppendStr(&buf, zSep, &rc);
+      sessionAppendIdent(&buf, p->azCol[i], &rc);
+      sessionAppendStr(&buf, " = ?", &rc);
+      sessionAppendInteger(&buf, i+1, &rc);
+      zSep = " AND ";
+    }
+  }
+
+  if( nPk<p->nCol ){
+    sessionAppendStr(&buf, " AND (?", &rc);
+    sessionAppendInteger(&buf, p->nCol+1, &rc);
+    sessionAppendStr(&buf, " OR ", &rc);
+
+    zSep = "";
+    for(i=0; i<p->nCol; i++){
+      if( !p->abPK[i] ){
+        sessionAppendStr(&buf, zSep, &rc);
+        sessionAppendIdent(&buf, p->azCol[i], &rc);
+        sessionAppendStr(&buf, " IS ?", &rc);
+        sessionAppendInteger(&buf, i+1, &rc);
+        zSep = "AND ";
+      }
+    }
+    sessionAppendStr(&buf, ")", &rc);
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sessionPrepare(db, &p->pDelete, &p->zErr, (char*)buf.aBuf);
+  }
+  sqlite3_free(buf.aBuf);
+
+  return rc;
+}
+
+/*
+** Formulate and prepare an SQL statement to query table zTab by primary
+** key. Assuming the following table structure:
+**
+**     CREATE TABLE x(a, b, c, d, PRIMARY KEY(a, c));
+**
+** The SELECT statement looks like this:
+**
+**     SELECT * FROM x WHERE a = ?1 AND c = ?3
+**
+** If successful, SQLITE_OK is returned and SessionApplyCtx.pSelect is left
+** pointing to the prepared version of the SQL statement.
+*/
+static int sessionSelectRow(
+  sqlite3 *db,                    /* Database handle */
+  const char *zTab,               /* Table name */
+  SessionApplyCtx *p              /* Session changeset-apply context */
+){
+  /* TODO */
+  return sessionSelectStmt(db, p->bIgnoreNoop,
+      "main", zTab, p->bRowid, p->nCol, p->azCol, p->abPK, &p->pSelect, &p->zErr
+  );
+}
+
+/*
+** Formulate and prepare an INSERT statement to add a record to table zTab.
+** For example:
+**
+**     INSERT INTO main."zTab" VALUES(?1, ?2, ?3 ...);
+**
+** If successful, SQLITE_OK is returned and SessionApplyCtx.pInsert is left
+** pointing to the prepared version of the SQL statement.
+*/
+static int sessionInsertRow(
+  sqlite3 *db,                    /* Database handle */
+  const char *zTab,               /* Table name */
+  SessionApplyCtx *p              /* Session changeset-apply context */
+){
+  int rc = SQLITE_OK;
+  int i;
+  SessionBuffer buf = {0, 0, 0};
+
+  sessionAppendStr(&buf, "INSERT INTO main.", &rc);
+  sessionAppendIdent(&buf, zTab, &rc);
+  sessionAppendStr(&buf, "(", &rc);
+  for(i=0; i<p->nCol; i++){
+    if( i!=0 ) sessionAppendStr(&buf, ", ", &rc);
+    sessionAppendIdent(&buf, p->azCol[i], &rc);
+  }
+
+  sessionAppendStr(&buf, ") VALUES(?", &rc);
+  for(i=1; i<p->nCol; i++){
+    sessionAppendStr(&buf, ", ?", &rc);
+  }
+  sessionAppendStr(&buf, ")", &rc);
+
+  if( rc==SQLITE_OK ){
+    rc = sessionPrepare(db, &p->pInsert, &p->zErr, (char*)buf.aBuf);
+  }
+  sqlite3_free(buf.aBuf);
+  return rc;
+}
+
+/*
+** Prepare statements for applying changes to the sqlite_stat1 table.
+** These are similar to those created by sessionSelectRow(),
+** sessionInsertRow(), sessionUpdateRow() and sessionDeleteRow() for
+** other tables.
+*/
+static int sessionStat1Sql(sqlite3 *db, SessionApplyCtx *p){
+  int rc = sessionSelectRow(db, "sqlite_stat1", p);
+  if( rc==SQLITE_OK ){
+    rc = sessionPrepare(db, &p->pInsert, 0,
+        "INSERT INTO main.sqlite_stat1 VALUES(?1, "
+        "CASE WHEN length(?2)=0 AND typeof(?2)='blob' THEN NULL ELSE ?2 END, "
+        "?3)"
+    );
+  }
+  if( rc==SQLITE_OK ){
+    rc = sessionPrepare(db, &p->pDelete, 0,
+        "DELETE FROM main.sqlite_stat1 WHERE tbl=?1 AND idx IS "
+        "CASE WHEN length(?2)=0 AND typeof(?2)='blob' THEN NULL ELSE ?2 END "
+        "AND (?4 OR stat IS ?3)"
+    );
+  }
+  return rc;
+}
+
+/*
+** A wrapper around sqlite3_bind_value() that detects an extra problem.
+** See comments in the body of this function for details.
+*/
+static int sessionBindValue(
+  sqlite3_stmt *pStmt,            /* Statement to bind value to */
+  int i,                          /* Parameter number to bind to */
+  sqlite3_value *pVal             /* Value to bind */
+){
+  int eType = sqlite3_value_type(pVal);
+  /* COVERAGE: The (pVal->z==0) branch is never true using current versions
+  ** of SQLite. If a malloc fails in an sqlite3_value_xxx() function, either
+  ** the (pVal->z) variable remains as it was or the type of the value is
+  ** set to SQLITE_NULL.  */
+  if( (eType==SQLITE_TEXT || eType==SQLITE_BLOB) && pVal->z==0 ){
+    /* This condition occurs when an earlier OOM in a call to
+    ** sqlite3_value_text() or sqlite3_value_blob() (perhaps from within
+    ** a conflict-handler) has zeroed the pVal->z pointer. Return NOMEM. */
+    return SQLITE_NOMEM;
+  }
+  return sqlite3_bind_value(pStmt, i, pVal);
+}
+
+/*
+** Iterator pIter must point to an SQLITE_INSERT entry. This function
+** transfers new.* values from the current iterator entry to statement
+** pStmt. The table being inserted into has nCol columns.
+**
+** New.* value $i from the iterator is bound to variable ($i+1) of
+** statement pStmt. If parameter abPK is NULL, all values from 0 to (nCol-1)
+** are transfered to the statement. Otherwise, if abPK is not NULL, it points
+** to an array nCol elements in size. In this case only those values for
+** which abPK[$i] is true are read from the iterator and bound to the
+** statement.
+**
+** An SQLite error code is returned if an error occurs. Otherwise, SQLITE_OK.
+*/
+static int sessionBindRow(
+  sqlite3_changeset_iter *pIter,  /* Iterator to read values from */
+  int(*xValue)(sqlite3_changeset_iter *, int, sqlite3_value **),
+  int nCol,                       /* Number of columns */
+  u8 *abPK,                       /* If not NULL, bind only if true */
+  sqlite3_stmt *pStmt             /* Bind values to this statement */
+){
+  int i;
+  int rc = SQLITE_OK;
+
+  /* Neither sqlite3changeset_old or sqlite3changeset_new can fail if the
+  ** argument iterator points to a suitable entry. Make sure that xValue
+  ** is one of these to guarantee that it is safe to ignore the return
+  ** in the code below. */
+  assert( xValue==sqlite3changeset_old || xValue==sqlite3changeset_new );
+
+  for(i=0; rc==SQLITE_OK && i<nCol; i++){
+    if( !abPK || abPK[i] ){
+      sqlite3_value *pVal = 0;
+      (void)xValue(pIter, i, &pVal);
+      if( pVal==0 ){
+        /* The value in the changeset was "undefined". This indicates a
+        ** corrupt changeset blob.  */
+        rc = SQLITE_CORRUPT_BKPT;
+      }else{
+        rc = sessionBindValue(pStmt, i+1, pVal);
+      }
+    }
+  }
+  return rc;
+}
+
+/*
+** SQL statement pSelect is as generated by the sessionSelectRow() function.
+** This function binds the primary key values from the change that changeset
+** iterator pIter points to to the SELECT and attempts to seek to the table
+** entry. If a row is found, the SELECT statement left pointing at the row
+** and SQLITE_ROW is returned. Otherwise, if no row is found and no error
+** has occured, the statement is reset and SQLITE_OK is returned. If an
+** error occurs, the statement is reset and an SQLite error code is returned.
+**
+** If this function returns SQLITE_ROW, the caller must eventually reset()
+** statement pSelect. If any other value is returned, the statement does
+** not require a reset().
+**
+** If the iterator currently points to an INSERT record, bind values from the
+** new.* record to the SELECT statement. Or, if it points to a DELETE or
+** UPDATE, bind values from the old.* record.
+*/
+static int sessionSeekToRow(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  SessionApplyCtx *p
+){
+  sqlite3_stmt *pSelect = p->pSelect;
+  int rc;                         /* Return code */
+  int nCol;                       /* Number of columns in table */
+  int op;                         /* Changset operation (SQLITE_UPDATE etc.) */
+  const char *zDummy;             /* Unused */
+
+  sqlite3_clear_bindings(pSelect);
+  sqlite3changeset_op(pIter, &zDummy, &nCol, &op, 0);
+  rc = sessionBindRow(pIter,
+      op==SQLITE_INSERT ? sqlite3changeset_new : sqlite3changeset_old,
+      nCol, p->abPK, pSelect
+  );
+
+  if( op!=SQLITE_DELETE && p->bIgnoreNoop ){
+    int ii;
+    for(ii=0; rc==SQLITE_OK && ii<nCol; ii++){
+      if( p->abPK[ii]==0 ){
+        sqlite3_value *pVal = 0;
+        sqlite3changeset_new(pIter, ii, &pVal);
+        sqlite3_bind_int(pSelect, ii+1+nCol, (pVal==0));
+        if( pVal ) rc = sessionBindValue(pSelect, ii+1, pVal);
+      }
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sqlite3_step(pSelect);
+    if( rc!=SQLITE_ROW ) rc = sqlite3_reset(pSelect);
+  }
+
+  return rc;
+}
+
+/*
+** This function is called from within sqlite3changeset_apply_v2() when
+** a conflict is encountered and resolved using conflict resolution
+** mode eType (either SQLITE_CHANGESET_OMIT or SQLITE_CHANGESET_REPLACE)..
+** It adds a conflict resolution record to the buffer in
+** SessionApplyCtx.rebase, which will eventually be returned to the caller
+** of apply_v2() as the "rebase" buffer.
+**
+** Return SQLITE_OK if successful, or an SQLite error code otherwise.
+*/
+static int sessionRebaseAdd(
+  SessionApplyCtx *p,             /* Apply context */
+  int eType,                      /* Conflict resolution (OMIT or REPLACE) */
+  sqlite3_changeset_iter *pIter   /* Iterator pointing at current change */
+){
+  int rc = SQLITE_OK;
+  if( p->bRebase ){
+    int i;
+    int eOp = pIter->op;
+    if( p->bRebaseStarted==0 ){
+      /* Append a table-header to the rebase buffer */
+      const char *zTab = pIter->zTab;
+      sessionAppendByte(&p->rebase, 'T', &rc);
+      sessionAppendVarint(&p->rebase, p->nCol, &rc);
+      sessionAppendBlob(&p->rebase, p->abPK, p->nCol, &rc);
+      sessionAppendBlob(&p->rebase, (u8*)zTab, (int)strlen(zTab)+1, &rc);
+      p->bRebaseStarted = 1;
+    }
+
+    assert( eType==SQLITE_CHANGESET_REPLACE||eType==SQLITE_CHANGESET_OMIT );
+    assert( eOp==SQLITE_DELETE || eOp==SQLITE_INSERT || eOp==SQLITE_UPDATE );
+
+    sessionAppendByte(&p->rebase,
+        (eOp==SQLITE_DELETE ? SQLITE_DELETE : SQLITE_INSERT), &rc
+        );
+    sessionAppendByte(&p->rebase, (eType==SQLITE_CHANGESET_REPLACE), &rc);
+    for(i=0; i<p->nCol; i++){
+      sqlite3_value *pVal = 0;
+      if( eOp==SQLITE_DELETE || (eOp==SQLITE_UPDATE && p->abPK[i]) ){
+        sqlite3changeset_old(pIter, i, &pVal);
+      }else{
+        sqlite3changeset_new(pIter, i, &pVal);
+      }
+      sessionAppendValue(&p->rebase, pVal, &rc);
+    }
+  }
+  return rc;
+}
+
+/*
+** Invoke the conflict handler for the change that the changeset iterator
+** currently points to.
+**
+** Argument eType must be either CHANGESET_DATA or CHANGESET_CONFLICT.
+** If argument pbReplace is NULL, then the type of conflict handler invoked
+** depends solely on eType, as follows:
+**
+**    eType value                 Value passed to xConflict
+**    -------------------------------------------------
+**    CHANGESET_DATA              CHANGESET_NOTFOUND
+**    CHANGESET_CONFLICT          CHANGESET_CONSTRAINT
+**
+** Or, if pbReplace is not NULL, then an attempt is made to find an existing
+** record with the same primary key as the record about to be deleted, updated
+** or inserted. If such a record can be found, it is available to the conflict
+** handler as the "conflicting" record. In this case the type of conflict
+** handler invoked is as follows:
+**
+**    eType value         PK Record found?   Value passed to xConflict
+**    ----------------------------------------------------------------
+**    CHANGESET_DATA      Yes                CHANGESET_DATA
+**    CHANGESET_DATA      No                 CHANGESET_NOTFOUND
+**    CHANGESET_CONFLICT  Yes                CHANGESET_CONFLICT
+**    CHANGESET_CONFLICT  No                 CHANGESET_CONSTRAINT
+**
+** If pbReplace is not NULL, and a record with a matching PK is found, and
+** the conflict handler function returns SQLITE_CHANGESET_REPLACE, *pbReplace
+** is set to non-zero before returning SQLITE_OK.
+**
+** If the conflict handler returns SQLITE_CHANGESET_ABORT, SQLITE_ABORT is
+** returned. Or, if the conflict handler returns an invalid value,
+** SQLITE_MISUSE. If the conflict handler returns SQLITE_CHANGESET_OMIT,
+** this function returns SQLITE_OK.
+*/
+static int sessionConflictHandler(
+  int eType,                      /* Either CHANGESET_DATA or CONFLICT */
+  SessionApplyCtx *p,             /* changeset_apply() context */
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  int(*xConflict)(void *, int, sqlite3_changeset_iter*),
+  void *pCtx,                     /* First argument for conflict handler */
+  int *pbReplace                  /* OUT: Set to true if PK row is found */
+){
+  int res = SQLITE_CHANGESET_OMIT;/* Value returned by conflict handler */
+  int rc;
+  int nCol;
+  int op;
+  const char *zDummy;
+
+  sqlite3changeset_op(pIter, &zDummy, &nCol, &op, 0);
+
+  assert( eType==SQLITE_CHANGESET_CONFLICT || eType==SQLITE_CHANGESET_DATA );
+  assert( SQLITE_CHANGESET_CONFLICT+1==SQLITE_CHANGESET_CONSTRAINT );
+  assert( SQLITE_CHANGESET_DATA+1==SQLITE_CHANGESET_NOTFOUND );
+
+  /* Bind the new.* PRIMARY KEY values to the SELECT statement. */
+  if( pbReplace ){
+    rc = sessionSeekToRow(pIter, p);
+  }else{
+    rc = SQLITE_OK;
+  }
+
+  if( rc==SQLITE_ROW ){
+    /* There exists another row with the new.* primary key. */
+    if( 0==p->bIgnoreNoop
+     || 0==sqlite3_column_int(p->pSelect, sqlite3_column_count(p->pSelect)-1)
+    ){
+      pIter->pConflict = p->pSelect;
+      res = xConflict(pCtx, eType, pIter);
+      pIter->pConflict = 0;
+    }
+    rc = sqlite3_reset(p->pSelect);
+  }else if( rc==SQLITE_OK ){
+    if( p->bDeferConstraints && eType==SQLITE_CHANGESET_CONFLICT ){
+      /* Instead of invoking the conflict handler, append the change blob
+      ** to the SessionApplyCtx.constraints buffer. */
+      u8 *aBlob = &pIter->in.aData[pIter->in.iCurrent];
+      int nBlob = pIter->in.iNext - pIter->in.iCurrent;
+      sessionAppendBlob(&p->constraints, aBlob, nBlob, &rc);
+      return rc;
+    }else if( p->bIgnoreNoop==0 || op!=SQLITE_DELETE
+           || eType==SQLITE_CHANGESET_CONFLICT
+    ){
+      /* No other row with the new.* primary key. */
+      res = xConflict(pCtx, eType+1, pIter);
+      if( res==SQLITE_CHANGESET_REPLACE ) rc = SQLITE_MISUSE;
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    switch( res ){
+      case SQLITE_CHANGESET_REPLACE:
+        assert( pbReplace );
+        *pbReplace = 1;
+        break;
+
+      case SQLITE_CHANGESET_OMIT:
+        break;
+
+      case SQLITE_CHANGESET_ABORT:
+        rc = SQLITE_ABORT;
+        break;
+
+      default:
+        rc = SQLITE_MISUSE;
+        break;
+    }
+    if( rc==SQLITE_OK ){
+      rc = sessionRebaseAdd(p, res, pIter);
+    }
+  }
+
+  return rc;
+}
+
+/*
+** Attempt to apply the change that the iterator passed as the first argument
+** currently points to to the database. If a conflict is encountered, invoke
+** the conflict handler callback.
+**
+** If argument pbRetry is NULL, then ignore any CHANGESET_DATA conflict. If
+** one is encountered, update or delete the row with the matching primary key
+** instead. Or, if pbRetry is not NULL and a CHANGESET_DATA conflict occurs,
+** invoke the conflict handler. If it returns CHANGESET_REPLACE, set *pbRetry
+** to true before returning. In this case the caller will invoke this function
+** again, this time with pbRetry set to NULL.
+**
+** If argument pbReplace is NULL and a CHANGESET_CONFLICT conflict is
+** encountered invoke the conflict handler with CHANGESET_CONSTRAINT instead.
+** Or, if pbReplace is not NULL, invoke it with CHANGESET_CONFLICT. If such
+** an invocation returns SQLITE_CHANGESET_REPLACE, set *pbReplace to true
+** before retrying. In this case the caller attempts to remove the conflicting
+** row before invoking this function again, this time with pbReplace set
+** to NULL.
+**
+** If any conflict handler returns SQLITE_CHANGESET_ABORT, this function
+** returns SQLITE_ABORT. Otherwise, if no error occurs, SQLITE_OK is
+** returned.
+*/
+static int sessionApplyOneOp(
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator */
+  SessionApplyCtx *p,             /* changeset_apply() context */
+  int(*xConflict)(void *, int, sqlite3_changeset_iter *),
+  void *pCtx,                     /* First argument for the conflict handler */
+  int *pbReplace,                 /* OUT: True to remove PK row and retry */
+  int *pbRetry                    /* OUT: True to retry. */
+){
+  const char *zDummy;
+  int op;
+  int nCol;
+  int rc = SQLITE_OK;
+
+  assert( p->pDelete && p->pInsert && p->pSelect );
+  assert( p->azCol && p->abPK );
+  assert( !pbReplace || *pbReplace==0 );
+
+  sqlite3changeset_op(pIter, &zDummy, &nCol, &op, 0);
+
+  if( op==SQLITE_DELETE ){
+
+    /* Bind values to the DELETE statement. If conflict handling is required,
+    ** bind values for all columns and set bound variable (nCol+1) to true.
+    ** Or, if conflict handling is not required, bind just the PK column
+    ** values and, if it exists, set (nCol+1) to false. Conflict handling
+    ** is not required if:
+    **
+    **   * this is a patchset, or
+    **   * (pbRetry==0), or
+    **   * all columns of the table are PK columns (in this case there is
+    **     no (nCol+1) variable to bind to).
+    */
+    u8 *abPK = (pIter->bPatchset ? p->abPK : 0);
+    rc = sessionBindRow(pIter, sqlite3changeset_old, nCol, abPK, p->pDelete);
+    if( rc==SQLITE_OK && sqlite3_bind_parameter_count(p->pDelete)>nCol ){
+      rc = sqlite3_bind_int(p->pDelete, nCol+1, (pbRetry==0 || abPK));
+    }
+    if( rc!=SQLITE_OK ) return rc;
+
+    sqlite3_step(p->pDelete);
+    rc = sqlite3_reset(p->pDelete);
+    if( rc==SQLITE_OK && sqlite3_changes(p->db)==0 ){
+      rc = sessionConflictHandler(
+          SQLITE_CHANGESET_DATA, p, pIter, xConflict, pCtx, pbRetry
+      );
+    }else if( (rc&0xff)==SQLITE_CONSTRAINT ){
+      rc = sessionConflictHandler(
+          SQLITE_CHANGESET_CONFLICT, p, pIter, xConflict, pCtx, 0
+      );
+    }
+
+  }else if( op==SQLITE_UPDATE ){
+    int i;
+    sqlite3_stmt *pUp = 0;
+    int bPatchset = (pbRetry==0 || pIter->bPatchset);
+
+    rc = sessionUpdateFind(pIter, p, bPatchset, &pUp);
+
+    /* Bind values to the UPDATE statement. */
+    for(i=0; rc==SQLITE_OK && i<nCol; i++){
+      sqlite3_value *pOld = sessionChangesetOld(pIter, i);
+      sqlite3_value *pNew = sessionChangesetNew(pIter, i);
+      if( pOld && (p->abPK[i] || bPatchset==0) ){
+        rc = sessionBindValue(pUp, i*2+2, pOld);
+      }
+      if( rc==SQLITE_OK && pNew ){
+        rc = sessionBindValue(pUp, i*2+1, pNew);
+      }
+    }
+    if( rc!=SQLITE_OK ) return rc;
+
+    /* Attempt the UPDATE. In the case of a NOTFOUND or DATA conflict,
+    ** the result will be SQLITE_OK with 0 rows modified. */
+    sqlite3_step(pUp);
+    rc = sqlite3_reset(pUp);
+
+    if( rc==SQLITE_OK && sqlite3_changes(p->db)==0 ){
+      /* A NOTFOUND or DATA error. Search the table to see if it contains
+      ** a row with a matching primary key. If so, this is a DATA conflict.
+      ** Otherwise, if there is no primary key match, it is a NOTFOUND. */
+
+      rc = sessionConflictHandler(
+          SQLITE_CHANGESET_DATA, p, pIter, xConflict, pCtx, pbRetry
+      );
+
+    }else if( (rc&0xff)==SQLITE_CONSTRAINT ){
+      /* This is always a CONSTRAINT conflict. */
+      rc = sessionConflictHandler(
+          SQLITE_CHANGESET_CONFLICT, p, pIter, xConflict, pCtx, 0
+      );
+    }
+
+  }else{
+    assert( op==SQLITE_INSERT );
+    if( p->bStat1 ){
+      /* Check if there is a conflicting row. For sqlite_stat1, this needs
+      ** to be done using a SELECT, as there is no PRIMARY KEY in the
+      ** database schema to throw an exception if a duplicate is inserted.  */
+      rc = sessionSeekToRow(pIter, p);
+      if( rc==SQLITE_ROW ){
+        rc = SQLITE_CONSTRAINT;
+        sqlite3_reset(p->pSelect);
+      }
+    }
+
+    if( rc==SQLITE_OK ){
+      rc = sessionBindRow(pIter, sqlite3changeset_new, nCol, 0, p->pInsert);
+      if( rc!=SQLITE_OK ) return rc;
+
+      sqlite3_step(p->pInsert);
+      rc = sqlite3_reset(p->pInsert);
+    }
+
+    if( (rc&0xff)==SQLITE_CONSTRAINT ){
+      rc = sessionConflictHandler(
+          SQLITE_CHANGESET_CONFLICT, p, pIter, xConflict, pCtx, pbReplace
+      );
+    }
+  }
+
+  return rc;
+}
+
+/*
+** Attempt to apply the change that the iterator passed as the first argument
+** currently points to to the database. If a conflict is encountered, invoke
+** the conflict handler callback.
+**
+** The difference between this function and sessionApplyOne() is that this
+** function handles the case where the conflict-handler is invoked and
+** returns SQLITE_CHANGESET_REPLACE - indicating that the change should be
+** retried in some manner.
+*/
+static int sessionApplyOneWithRetry(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  sqlite3_changeset_iter *pIter,  /* Changeset iterator to read change from */
+  SessionApplyCtx *pApply,        /* Apply context */
+  int(*xConflict)(void*, int, sqlite3_changeset_iter*),
+  void *pCtx                      /* First argument passed to xConflict */
+){
+  int bReplace = 0;
+  int bRetry = 0;
+  int rc;
+
+  rc = sessionApplyOneOp(pIter, pApply, xConflict, pCtx, &bReplace, &bRetry);
+  if( rc==SQLITE_OK ){
+    /* If the bRetry flag is set, the change has not been applied due to an
+    ** SQLITE_CHANGESET_DATA problem (i.e. this is an UPDATE or DELETE and
+    ** a row with the correct PK is present in the db, but one or more other
+    ** fields do not contain the expected values) and the conflict handler
+    ** returned SQLITE_CHANGESET_REPLACE. In this case retry the operation,
+    ** but pass NULL as the final argument so that sessionApplyOneOp() ignores
+    ** the SQLITE_CHANGESET_DATA problem.  */
+    if( bRetry ){
+      assert( pIter->op==SQLITE_UPDATE || pIter->op==SQLITE_DELETE );
+      rc = sessionApplyOneOp(pIter, pApply, xConflict, pCtx, 0, 0);
+    }
+
+    /* If the bReplace flag is set, the change is an INSERT that has not
+    ** been performed because the database already contains a row with the
+    ** specified primary key and the conflict handler returned
+    ** SQLITE_CHANGESET_REPLACE. In this case remove the conflicting row
+    ** before reattempting the INSERT.  */
+    else if( bReplace ){
+      assert( pIter->op==SQLITE_INSERT );
+      rc = sqlite3_exec(db, "SAVEPOINT replace_op", 0, 0, 0);
+      if( rc==SQLITE_OK ){
+        rc = sessionBindRow(pIter,
+            sqlite3changeset_new, pApply->nCol, pApply->abPK, pApply->pDelete);
+        sqlite3_bind_int(pApply->pDelete, pApply->nCol+1, 1);
+      }
+      if( rc==SQLITE_OK ){
+        sqlite3_step(pApply->pDelete);
+        rc = sqlite3_reset(pApply->pDelete);
+      }
+      if( rc==SQLITE_OK ){
+        rc = sessionApplyOneOp(pIter, pApply, xConflict, pCtx, 0, 0);
+      }
+      if( rc==SQLITE_OK ){
+        rc = sqlite3_exec(db, "RELEASE replace_op", 0, 0, 0);
+      }
+    }
+  }
+
+  return rc;
+}
+
+/*
+** Create an iterator to iterate through the retry buffer pRetry.
+*/
+static int sessionRetryIterInit(
+  SessionBuffer *pRetry,          /* Buffer to iterate through */
+  int bPatchset,                  /* True for patchset, false for changeset */
+  const char *zTab,               /* Table name */
+  SessionApplyCtx *pApply,        /* Session apply context */
+  sqlite3_changeset_iter **ppIter /* OUT: New iterator */
+){
+  sqlite3_changeset_iter *pRet = 0;
+  int rc = SQLITE_OK;
+
+  rc = sessionChangesetStart(
+      &pRet, 0, 0, pRetry->nBuf, pRetry->aBuf, pApply->bInvertConstraints, 1
+  );
+  if( rc==SQLITE_OK ){
+    size_t nByte = 2*pApply->nCol*sizeof(sqlite3_value*);
+    pRet->bPatchset = bPatchset;
+    pRet->zTab = (char*)zTab;
+    pRet->nCol = pApply->nCol;
+    pRet->abPK = pApply->abPK;
+    sessionBufferGrow(&pRet->tblhdr, nByte, &rc);
+    pRet->apValue = (sqlite3_value**)pRet->tblhdr.aBuf;
+    if( rc==SQLITE_OK ){
+      memset(pRet->apValue, 0, nByte);
+    }else{
+      sqlite3changeset_finalize(pRet);
+      pRet = 0;
+    }
+  }
+
+  *ppIter = pRet;
+  return rc;
+}
+
+/*
+** Attempt to apply all the changes in retry buffer pRetry to the database.
+** Except, if parameter iSkip is greater than or equal to 0, skip change
+** iSkip.
+*/
+static int sessionApplyRetryBuffer(
+  SessionBuffer *pRetry,          /* Buffer to apply changes from */
+  int iSkip,                      /* If >=0, index of change to omit */
+  sqlite3 *db,                    /* Database handle */
+  int bPatchset,                  /* True for patchset, false for changeset */
+  const char *zTab,               /* Name of table to write to */
+  SessionApplyCtx *pApply,        /* Apply context */
+  int(*xConflict)(void*, int, sqlite3_changeset_iter*),
+  void *pCtx                      /* First argument passed to xConflict */
+){
+  int rc = SQLITE_OK;
+  int rc2 = SQLITE_OK;
+  int ii = 0;
+  sqlite3_changeset_iter *pIter = 0;
+
+  assert( pApply->constraints.nBuf==0 );
+
+  rc = sessionRetryIterInit(pRetry, bPatchset, zTab, pApply, &pIter);
+
+  for(ii=0; rc==SQLITE_OK && SQLITE_ROW==sqlite3changeset_next(pIter); ii++){
+    if( ii!=iSkip ){
+      rc = sessionApplyOneWithRetry(db, pIter, pApply, xConflict, pCtx);
+    }
+  }
+
+  rc2 = sqlite3changeset_finalize(pIter);
+  if( rc==SQLITE_OK ) rc = rc2;
+  assert( pApply->bDeferConstraints || pApply->constraints.nBuf==0 );
+
+  return rc;
+}
+
+/*
+** Check if table zTab in the "main" database of db is a WITHOUT ROWID
+** table.
+**
+** If no error occurs, return SQLITE_OK and set output variable (*pbWR) to
+** true if zTab is a WITHOUT ROWID table, or false otherwise. Or, if an
+** error does occur, return an SQLite error code. The final value of (*pbWR)
+** is undefined in this case.
+*/
+static int sessionTableIsWithoutRowid(sqlite3 *db, const char *zTab, int *pbWR){
+  sqlite3_stmt *pList = 0;
+  char *zSql = 0;
+  int rc = SQLITE_OK;
+
+  zSql = sqlite3_mprintf("PRAGMA table_list = %Q", zTab);
+  if( zSql==0 ){
+    rc = SQLITE_NOMEM;
+  }else{
+    rc = sqlite3_prepare_v2(db, zSql, -1, &pList, 0);
+    sqlite3_free(zSql);
+  }
+
+  if( rc==SQLITE_OK ){
+    sqlite3_step(pList);
+    *pbWR = sqlite3_column_int(pList, 4);
+    rc = sqlite3_finalize(pList);
+  }
+
+  return rc;
+}
+
+/*
+** Iterator pUp points to an UPDATE change. This function deletes the
+** affected row from the database and creates an INSERT statement that
+** may be used to reinsert the row as it is after the UPDATE change
+** has been applied.
+**
+** If successful, SQLITE_OK is returned and output variable (*ppInsert)
+** is left pointing to a prepared INSERT statement. It is the responsibility
+** of the caller to eventually free this statement using sqlite3_finalize().
+** Or, if an error occurs, an SQLite error code is returned and (*ppInsert)
+** set to NULL. pApply->zErr may be set to an error message in this case.
+*/
+static int sessionUpdateToDeleteInsert(
+  sqlite3 *db,                    /* Database to write to */
+  const char *zTab,               /* Table name */
+  SessionApplyCtx *pApply,        /* Apply context */
+  sqlite3_changeset_iter *pUp,    /* Iterator pointing to UPDATE change */
+  sqlite3_stmt **ppInsert         /* OUT: INSERT statement */
+){
+  sqlite3_stmt *pRet = 0;         /* The INSERT statement */
+  sqlite3_stmt *pSelect = 0;      /* SELECT to read current values of row */
+  int rc = SQLITE_OK;
+  int bWR = 0;
+
+  rc = sessionTableIsWithoutRowid(db, zTab, &bWR);
+  if( rc==SQLITE_OK ){
+    char *zSelect = 0;
+    char *zInsert = 0;
+    SessionBuffer cols = {0, 0, 0};
+    SessionBuffer insbind = {0, 0, 0};
+    SessionBuffer pkcols = {0, 0, 0};
+    SessionBuffer selbind = {0, 0, 0};
+
+    const char *zComma = "";
+    const char *zComma2 = "";
+    int ii;
+    for(ii=0; ii<pApply->nCol; ii++){
+      sessionAppendStr(&cols, zComma, &rc);
+      sessionAppendIdent(&cols, pApply->azCol[ii], &rc);
+      sessionAppendStr(&insbind, zComma, &rc);
+      sessionAppendStr(&insbind, "?", &rc);
+      zComma = ", ";
+
+      if( pApply->abPK[ii] ){
+        sessionAppendStr(&pkcols, zComma2, &rc);
+        sessionAppendIdent(&pkcols, pApply->azCol[ii], &rc);
+        sessionAppendStr(&selbind, zComma2, &rc);
+        sessionAppendPrintf(&selbind, &rc, "?%d", ii+1);
+        zComma2 = ", ";
+      }
+    }
+    if( bWR==0 ){
+      sessionAppendStr(&cols, zComma, &rc);
+      sessionAppendStr(&cols, SESSIONS_ROWID, &rc);
+      sessionAppendStr(&insbind, zComma, &rc);
+      sessionAppendStr(&insbind, "?", &rc);
+    }
+
+    if( rc==SQLITE_OK ){
+      zSelect = sqlite3_mprintf("SELECT %s FROM %Q WHERE (%s) IS (%s)",
+          cols.aBuf, zTab, pkcols.aBuf, selbind.aBuf
+      );
+      if( zSelect==0 ) rc = SQLITE_NOMEM;
+    }
+    if( rc==SQLITE_OK ){
+      zInsert = sqlite3_mprintf("INSERT INTO %Q(%s) VALUES(%s)",
+          zTab, cols.aBuf, insbind.aBuf
+      );
+      if( zInsert==0 ) rc = SQLITE_NOMEM;
+    }
+
+    if( rc==SQLITE_OK ){
+      rc = sessionPrepare(db, &pSelect, &pApply->zErr, zSelect);
+    }
+    if( rc==SQLITE_OK ){
+      rc = sessionPrepare(db, &pRet, &pApply->zErr, zInsert);
+    }
+
+    sqlite3_free(zSelect);
+    sqlite3_free(zInsert);
+    sqlite3_free(cols.aBuf);
+    sqlite3_free(insbind.aBuf);
+    sqlite3_free(pkcols.aBuf);
+    sqlite3_free(selbind.aBuf);
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sessionBindRow(
+        pUp, sqlite3changeset_old, pApply->nCol, pApply->abPK, pSelect
+    );
+  }
+
+  if( rc==SQLITE_OK && sqlite3_step(pSelect)==SQLITE_ROW ){
+    int iCol;
+    for(iCol=0; iCol<pApply->nCol; iCol++){
+      sqlite3_value *pVal = pUp->apValue[iCol+pApply->nCol];
+      if( pVal==0 ){
+        pVal = sqlite3_column_value(pSelect, iCol);
+      }
+      rc = sqlite3_bind_value(pRet, iCol+1, pVal);
+    }
+    if( bWR==0 ){
+      sqlite3_bind_int64(pRet, iCol+1, sqlite3_column_int64(pSelect, iCol));
+    }
+  }
+  sessionFinalizeStmt(pSelect, &rc);
+
+  /* Delete the row from the database. */
+  if( rc==SQLITE_OK ){
+    rc = sessionBindRow(
+        pUp, sqlite3changeset_old, pApply->nCol, pApply->abPK, pApply->pDelete
+    );
+    sqlite3_bind_int(pApply->pDelete, pApply->nCol+1, 1);
+  }
+  if( rc==SQLITE_OK ){
+    sqlite3_step(pApply->pDelete);
+    rc = sqlite3_reset(pApply->pDelete);
+  }
+
+  if( rc!=SQLITE_OK ){
+    sqlite3_finalize(pRet);
+    pRet = 0;
+  }
+
+  *ppInsert = pRet;
+  return rc;
+}
+
+/*
+** Retry the changes accumulated in the pApply->constraints buffer. The
+** pApply->constraints buffer contains all changes to table zTab that
+** could not be applied due to SQLITE_CONSTRAINT errors. This function
+** attempts to apply them as follows:
+**
+**   1) It runs through the buffer and attempts to retry each change,
+**      removing any that are successfully applied from the buffer. This
+**      is repeated until no further progress can be made.
+**
+**   2) For each UPDATE change in the buffer, try the following in a
+**      savepoint transaction:
+**
+**      a) DELETE the affected row,
+**      b) Attempt step (1) with remaining changes,
+**      c) Attempt to INSERT a row equivalent to the one that would be
+**         created by applying this UPDATE change.
+**
+**      If the INSERT in (c) succeeds, the savepoint is committed and all
+**      successfully applied changes are removed from the buffer. Step (2)
+**      is then repeated.
+**
+**   3) Once step (2) has been attempted for each UPDATE in the change,
+**      a final attempt is made to apply each remaining change. This time,
+**      if an SQLITE_CONSTRAINT error is encountered, the conflict handler
+**      is invoked and the user has to decide whether to omit the change
+**      or rollback the entire _apply() operation.
+*/
+static int sessionRetryConstraints(
+  sqlite3 *db,
+  int bPatchset,
+  const char *zTab,
+  SessionApplyCtx *pApply,
+  int(*xConflict)(void*, int, sqlite3_changeset_iter*),
+  void *pCtx                      /* First argument passed to xConflict */
+){
+  int rc = SQLITE_OK;
+  int iUpdate = 0;
+
+  /* Step (1) */
+  while( pApply->constraints.nBuf ){
+    SessionBuffer cons = pApply->constraints;
+    memset(&pApply->constraints, 0, sizeof(SessionBuffer));
+
+    rc = sessionApplyRetryBuffer(
+        &cons, -1, db, bPatchset, zTab, pApply, xConflict, pCtx
+    );
+
+    sqlite3_free(cons.aBuf);
+    if( rc!=SQLITE_OK ) break;
+
+    /* If no progress has been made this round, break out of the loop. */
+    if( pApply->constraints.nBuf>=cons.nBuf ) break;
+  }
+
+  /* Step (2) */
+  while( rc==SQLITE_OK && pApply->constraints.nBuf && !pApply->bNoUpdateLoop ){
+    SessionBuffer cons = {0, 0, 0};
+    sqlite3_changeset_iter *pUp = 0;
+    sqlite3_stmt *pInsert = 0;
+    int iSkip = 0;
+
+    rc = sessionRetryIterInit(
+        &pApply->constraints, bPatchset, zTab, pApply, &pUp
+    );
+    if( rc==SQLITE_OK ){
+      int iThis = -1;
+      while( SQLITE_ROW==sqlite3changeset_next(pUp) ){
+        if( pUp->op==SQLITE_UPDATE ) iThis++;
+        if( iThis==iUpdate ) break;
+        iSkip++;
+      }
+      if( iThis==iUpdate ){
+        rc = sqlite3_exec(db, "SAVEPOINT update_op", 0, 0, 0);
+        if( rc==SQLITE_OK ){
+          rc = sessionUpdateToDeleteInsert(db, zTab, pApply, pUp, &pInsert);
+        }
+      }
+      sqlite3changeset_finalize(pUp);
+      if( iThis!=iUpdate ) break;
+    }
+
+    if( rc==SQLITE_OK ){
+      cons = pApply->constraints;
+
+      while( rc==SQLITE_OK && pApply->constraints.nBuf>0 ){
+        SessionBuffer app = pApply->constraints;
+        memset(&pApply->constraints, 0, sizeof(SessionBuffer));
+        rc = sessionApplyRetryBuffer(
+            &app, iSkip, db, bPatchset, zTab, pApply, xConflict, pCtx
+        );
+        if( app.aBuf!=cons.aBuf ){
+          sqlite3_free(app.aBuf);
+        }
+        if( pApply->constraints.nBuf>=app.nBuf ){
+          break;
+        }
+        iSkip = -1;
+      }
+    }
+
+    iUpdate++;
+    if( rc==SQLITE_OK ){
+      sqlite3_step(pInsert);
+      rc = sqlite3_finalize(pInsert);
+      if( rc==SQLITE_CONSTRAINT ){
+        rc = sqlite3_exec(db, "ROLLBACK TO update_op", 0, 0, 0);
+        sqlite3_free(pApply->constraints.aBuf);
+        pApply->constraints = cons;
+        memset(&cons, 0, sizeof(cons));
+      }else if( rc==SQLITE_OK ){
+        iUpdate = 0;
+      }
+      if( rc==SQLITE_OK ){
+        rc = sqlite3_exec(db, "RELEASE update_op", 0, 0, 0);
+      }
+    }else{
+      sqlite3_finalize(pInsert);
+    }
+
+    sqlite3_free(cons.aBuf);
+  }
+
+  /* Step (3) */
+  if( rc==SQLITE_OK && pApply->constraints.nBuf ){
+    SessionBuffer cons = pApply->constraints;
+    memset(&pApply->constraints, 0, sizeof(SessionBuffer));
+    pApply->bDeferConstraints = 0;
+    rc = sessionApplyRetryBuffer(
+        &cons, -1, db, bPatchset, zTab, pApply, xConflict, pCtx
+    );
+    sqlite3_free(cons.aBuf);
+  }
+
+  return rc;
+}
+
+/*
+** Argument pIter is a changeset iterator that has been initialized, but
+** not yet passed to sqlite3changeset_next(). This function applies the
+** changeset to the main database attached to handle "db". The supplied
+** conflict handler callback is invoked to resolve any conflicts encountered
+** while applying the change.
+*/
+static int sessionChangesetApply(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  sqlite3_changeset_iter *pIter,  /* Changeset to apply */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xFilterIter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    sqlite3_changeset_iter *p
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of fifth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase, /* OUT: Rebase information */
+  int flags                       /* SESSION_APPLY_XXX flags */
+){
+  int schemaMismatch = 0;
+  int rc = SQLITE_OK;             /* Return code */
+  const char *zTab = 0;           /* Name of current table */
+  int nTab = 0;                   /* Result of sqlite3Strlen30(zTab) */
+  SessionApplyCtx sApply;         /* changeset_apply() context object */
+  int bPatchset;
+  u64 savedFlag = db->flags & SQLITE_FkNoAction;
+
+  assert( xConflict!=0 );
+
+  sqlite3_mutex_enter(sqlite3_db_mutex(db));
+  if( flags & SQLITE_CHANGESETAPPLY_FKNOACTION ){
+    db->flags |= ((u64)SQLITE_FkNoAction);
+    db->aDb[0].pSchema->schema_cookie -= 32;
+  }
+
+  pIter->in.bNoDiscard = 1;
+  memset(&sApply, 0, sizeof(sApply));
+  sApply.bRebase = (ppRebase && pnRebase);
+  sApply.bInvertConstraints = !!(flags & SQLITE_CHANGESETAPPLY_INVERT);
+  sApply.bIgnoreNoop = !!(flags & SQLITE_CHANGESETAPPLY_IGNORENOOP);
+  sApply.bNoUpdateLoop = !!(flags & SQLITE_CHANGESETAPPLY_NOUPDATELOOP);
+  if( (flags & SQLITE_CHANGESETAPPLY_NOSAVEPOINT)==0 ){
+    rc = sqlite3_exec(db, "SAVEPOINT changeset_apply", 0, 0, 0);
+  }
+  if( rc==SQLITE_OK ){
+    rc = sqlite3_exec(db, "PRAGMA defer_foreign_keys = 1", 0, 0, 0);
+  }
+  while( rc==SQLITE_OK && SQLITE_ROW==sqlite3changeset_next(pIter) ){
+    int nCol;
+    int op;
+    const char *zNew;
+
+    sqlite3changeset_op(pIter, &zNew, &nCol, &op, 0);
+
+    if( zTab==0 || sqlite3_strnicmp(zNew, zTab, nTab+1) ){
+      u8 *abPK;
+
+      rc = sessionRetryConstraints(
+          db, pIter->bPatchset, zTab, &sApply, xConflict, pCtx
+      );
+      if( rc!=SQLITE_OK ) break;
+
+      sessionUpdateFree(&sApply);
+      sqlite3_free((char*)sApply.azCol);  /* cast works around VC++ bug */
+      sqlite3_finalize(sApply.pDelete);
+      sqlite3_finalize(sApply.pInsert);
+      sqlite3_finalize(sApply.pSelect);
+      sApply.db = db;
+      sApply.pDelete = 0;
+      sApply.pInsert = 0;
+      sApply.pSelect = 0;
+      sApply.nCol = 0;
+      sApply.azCol = 0;
+      sApply.abPK = 0;
+      sApply.bStat1 = 0;
+      sApply.bDeferConstraints = 1;
+      sApply.bRebaseStarted = 0;
+      sApply.bRowid = 0;
+      memset(&sApply.constraints, 0, sizeof(SessionBuffer));
+
+      /* If an xFilter() callback was specified, invoke it now. If the
+      ** xFilter callback returns zero, skip this table. If it returns
+      ** non-zero, proceed. */
+      schemaMismatch = (xFilter && (0==xFilter(pCtx, zNew)));
+      if( schemaMismatch ){
+        zTab = sqlite3_mprintf("%s", zNew);
+        if( zTab==0 ){
+          rc = SQLITE_NOMEM;
+          break;
+        }
+        nTab = (int)strlen(zTab);
+        sApply.azCol = (const char **)zTab;
+      }else{
+        int nMinCol = 0;
+        int i;
+
+        sqlite3changeset_pk(pIter, &abPK, 0);
+        rc = sessionTableInfo(0, db, "main", zNew,
+            &sApply.nCol, 0, &zTab, &sApply.azCol, 0, 0,
+            &sApply.abPK, &sApply.bRowid
+        );
+        if( rc!=SQLITE_OK ) break;
+        for(i=0; i<sApply.nCol; i++){
+          if( sApply.abPK[i] ) nMinCol = i+1;
+        }
+
+        if( sApply.nCol==0 ){
+          schemaMismatch = 1;
+          sqlite3_log(SQLITE_SCHEMA,
+              "sqlite3changeset_apply(): no such table: %s", zTab
+          );
+        }
+        else if( sApply.nCol<nCol ){
+          schemaMismatch = 1;
+          sqlite3_log(SQLITE_SCHEMA,
+              "sqlite3changeset_apply(): table %s has %d columns, "
+              "expected %d or more",
+              zTab, sApply.nCol, nCol
+          );
+        }
+        else if( nCol<nMinCol || memcmp(sApply.abPK, abPK, nCol)!=0 ){
+          schemaMismatch = 1;
+          sqlite3_log(SQLITE_SCHEMA, "sqlite3changeset_apply(): "
+              "primary key mismatch for table %s", zTab
+          );
+        }
+        else{
+          sApply.nCol = nCol;
+          if( 0==sqlite3_stricmp(zTab, "sqlite_stat1") ){
+            if( (rc = sessionStat1Sql(db, &sApply) ) ){
+              break;
+            }
+            sApply.bStat1 = 1;
+          }else{
+            if( (rc = sessionSelectRow(db, zTab, &sApply))
+             || (rc = sessionDeleteRow(db, zTab, &sApply))
+             || (rc = sessionInsertRow(db, zTab, &sApply))
+            ){
+              break;
+            }
+            sApply.bStat1 = 0;
+          }
+        }
+        nTab = sqlite3Strlen30(zTab);
+      }
+    }
+
+    /* If there is a schema mismatch on the current table, proceed to the
+    ** next change. A log message has already been issued. */
+    if( schemaMismatch ) continue;
+
+    /* If this is a call to apply_v3(), invoke xFilterIter here. */
+    if( xFilterIter && 0==xFilterIter(pCtx, pIter) ) continue;
+
+    rc = sessionApplyOneWithRetry(db, pIter, &sApply, xConflict, pCtx);
+  }
+
+  bPatchset = pIter->bPatchset;
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changeset_finalize(pIter);
+  }else{
+    sqlite3changeset_finalize(pIter);
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sessionRetryConstraints(db, bPatchset, zTab, &sApply, xConflict, pCtx);
+  }
+
+  if( rc==SQLITE_OK ){
+    int nFk, notUsed;
+    sqlite3_db_status(db, SQLITE_DBSTATUS_DEFERRED_FKS, &nFk, &notUsed, 0);
+    if( nFk!=0 ){
+      int res = SQLITE_CHANGESET_ABORT;
+      sqlite3_changeset_iter sIter;
+      memset(&sIter, 0, sizeof(sIter));
+      sIter.nCol = nFk;
+      res = xConflict(pCtx, SQLITE_CHANGESET_FOREIGN_KEY, &sIter);
+      if( res!=SQLITE_CHANGESET_OMIT ){
+        rc = SQLITE_CONSTRAINT;
+      }
+    }
+  }
+
+  {
+    int rc2 = sqlite3_exec(db, "PRAGMA defer_foreign_keys = 0", 0, 0, 0);
+    if( rc==SQLITE_OK ) rc = rc2;
+  }
+
+  if( (flags & SQLITE_CHANGESETAPPLY_NOSAVEPOINT)==0 ){
+    if( rc==SQLITE_OK ){
+      rc = sqlite3_exec(db, "RELEASE changeset_apply", 0, 0, 0);
+    }
+    if( rc!=SQLITE_OK ){
+      sqlite3_exec(db, "ROLLBACK TO changeset_apply", 0, 0, 0);
+      sqlite3_exec(db, "RELEASE changeset_apply", 0, 0, 0);
+    }
+  }
+
+  assert( sApply.bRebase || sApply.rebase.nBuf==0 );
+  if( rc==SQLITE_OK && bPatchset==0 && sApply.bRebase ){
+    assert( ppRebase!=0 && pnRebase!=0 );
+    *ppRebase = (void*)sApply.rebase.aBuf;
+    *pnRebase = sApply.rebase.nBuf;
+    sApply.rebase.aBuf = 0;
+  }
+  sessionUpdateFree(&sApply);
+  sqlite3_finalize(sApply.pInsert);
+  sqlite3_finalize(sApply.pDelete);
+  sqlite3_finalize(sApply.pSelect);
+  sqlite3_free((char*)sApply.azCol);  /* cast works around VC++ bug */
+  sqlite3_free((char*)sApply.constraints.aBuf);
+  sqlite3_free((char*)sApply.rebase.aBuf);
+
+  if( (flags & SQLITE_CHANGESETAPPLY_FKNOACTION) && savedFlag==0 ){
+    assert( db->flags & SQLITE_FkNoAction );
+    db->flags &= ~((u64)SQLITE_FkNoAction);
+    db->aDb[0].pSchema->schema_cookie -= 32;
+  }
+
+  assert( rc!=SQLITE_OK || sApply.zErr==0 );
+  sqlite3_set_errmsg(db, rc, sApply.zErr);
+  sqlite3_free(sApply.zErr);
+
+  sqlite3_mutex_leave(sqlite3_db_mutex(db));
+  return rc;
+}
+
+/*
+** This function is called by all six sqlite3changeset_apply() variants:
+**
+**   +  sqlite3changeset_apply()
+**   +  sqlite3changeset_apply_v2()
+**   +  sqlite3changeset_apply_v3()
+**   +  sqlite3changeset_apply_strm()
+**   +  sqlite3changeset_apply_strm_v2()
+**   +  sqlite3changeset_apply_strm_v3()
+**
+** Arguments passed to this function are as follows:
+**
+** db:
+**   Database handle to apply changeset to main database of.
+**
+** nChangeset/pChangeset:
+**   These are both passed zero for the streaming variants. For the normal
+**   apply() functions, these are passed the size of and the buffer containing
+**   the changeset, respectively.
+**
+** xInput/pIn:
+**   These are both passed zero for the normal variants. For the streaming
+**   apply() functions, these are passed the input callback and context
+**   pointer, respectively.
+**
+** xFilter:
+**   The filter function as passed to apply() or apply_v2() (to filter by
+**   table name), if any. This is always NULL for apply_v3() calls.
+**
+** xFilterIter:
+**   The filter function as passed to apply_v3(), if any.
+**
+** xConflict:
+**   The conflict handler callback (must not be NULL).
+**
+** pCtx:
+**   The context pointer passed to the xFilter and xConflict handler callbacks.
+**
+** ppRebase, pnRebase:
+**   Zero for apply(). The rebase changeset output pointers, if any, for
+**   apply_v2() and apply_v3().
+**
+** flags:
+**   Zero for apply(). The flags parameter for apply_v2() and apply_v3().
+*/
+static int sessionChangesetApplyV23(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int nChangeset,                 /* Size of changeset in bytes */
+  void *pChangeset,               /* Changeset blob */
+  int (*xInput)(void *pIn, void *pData, int *pnData), /* Input function */
+  void *pIn,                                          /* First arg for xInput */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xFilterIter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    sqlite3_changeset_iter *p     /* Handle describing current change */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase,
+  int flags
+){
+  sqlite3_changeset_iter *pIter;  /* Iterator to skip through changeset */
+  int bInverse = !!(flags & SQLITE_CHANGESETAPPLY_INVERT);
+  int rc = sessionChangesetStart(
+      &pIter, xInput, pIn, nChangeset, pChangeset, bInverse, 1
+  );
+  if( rc==SQLITE_OK ){
+    rc = sessionChangesetApply(db, pIter,
+        xFilter, xFilterIter, xConflict, pCtx, ppRebase, pnRebase, flags
+    );
+  }
+  return rc;
+}
+
+/*
+** Apply the changeset passed via pChangeset/nChangeset to the main
+** database attached to handle "db".
+*/
+SQLITE_API int sqlite3changeset_apply_v2(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int nChangeset,                 /* Size of changeset in bytes */
+  void *pChangeset,               /* Changeset blob */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase,
+  int flags
+){
+  return sessionChangesetApplyV23(db,
+      nChangeset, pChangeset, 0, 0,
+      xFilter, 0, xConflict, pCtx,
+      ppRebase, pnRebase, flags
+  );
+}
+
+/*
+** Apply the changeset passed via pChangeset/nChangeset to the main
+** database attached to handle "db".
+*/
+SQLITE_API int sqlite3changeset_apply_v3(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int nChangeset,                 /* Size of changeset in bytes */
+  void *pChangeset,               /* Changeset blob */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    sqlite3_changeset_iter *p     /* Handle describing current change */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase,
+  int flags
+){
+  return sessionChangesetApplyV23(db,
+      nChangeset, pChangeset, 0, 0,
+      0, xFilter, xConflict, pCtx,
+      ppRebase, pnRebase, flags
+  );
+}
+
+/*
+** Apply the changeset passed via pChangeset/nChangeset to the main database
+** attached to handle "db". Invoke the supplied conflict handler callback
+** to resolve any conflicts encountered while applying the change.
+*/
+SQLITE_API int sqlite3changeset_apply(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int nChangeset,                 /* Size of changeset in bytes */
+  void *pChangeset,               /* Changeset blob */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of fifth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx                      /* First argument passed to xConflict */
+){
+  return sessionChangesetApplyV23(db,
+      nChangeset, pChangeset, 0, 0,
+      xFilter, 0, xConflict, pCtx,
+      0, 0, 0
+  );
+}
+
+/*
+** Apply the changeset passed via xInput/pIn to the main database
+** attached to handle "db". Invoke the supplied conflict handler callback
+** to resolve any conflicts encountered while applying the change.
+*/
+SQLITE_API int sqlite3changeset_apply_v3_strm(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int (*xInput)(void *pIn, void *pData, int *pnData), /* Input function */
+  void *pIn,                                          /* First arg for xInput */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    sqlite3_changeset_iter *p
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase,
+  int flags
+){
+  return sessionChangesetApplyV23(db,
+      0, 0, xInput, pIn,
+      0, xFilter, xConflict, pCtx,
+      ppRebase, pnRebase, flags
+  );
+}
+SQLITE_API int sqlite3changeset_apply_v2_strm(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int (*xInput)(void *pIn, void *pData, int *pnData), /* Input function */
+  void *pIn,                                          /* First arg for xInput */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx,                     /* First argument passed to xConflict */
+  void **ppRebase, int *pnRebase,
+  int flags
+){
+  return sessionChangesetApplyV23(db,
+      0, 0, xInput, pIn,
+      xFilter, 0, xConflict, pCtx,
+      ppRebase, pnRebase, flags
+  );
+}
+SQLITE_API int sqlite3changeset_apply_strm(
+  sqlite3 *db,                    /* Apply change to "main" db of this handle */
+  int (*xInput)(void *pIn, void *pData, int *pnData), /* Input function */
+  void *pIn,                                          /* First arg for xInput */
+  int(*xFilter)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    const char *zTab              /* Table name */
+  ),
+  int(*xConflict)(
+    void *pCtx,                   /* Copy of sixth arg to _apply() */
+    int eConflict,                /* DATA, MISSING, CONFLICT, CONSTRAINT */
+    sqlite3_changeset_iter *p     /* Handle describing change and conflict */
+  ),
+  void *pCtx                      /* First argument passed to xConflict */
+){
+  return sessionChangesetApplyV23(db,
+      0, 0, xInput, pIn,
+      xFilter, 0, xConflict, pCtx,
+      0, 0, 0
+  );
+}
+
+/*
+** The parts of the sqlite3_changegroup structure used by the
+** sqlite3changegroup_change_xxx() APIs.
+*/
+typedef struct ChangeData ChangeData;
+struct ChangeData {
+  SessionTable *pTab;
+  int bIndirect;
+  int eOp;
+
+  int nBufAlloc;
+  SessionBuffer *aBuf;
+  SessionBuffer record;
+};
+
+/*
+** sqlite3_changegroup handle.
+*/
+struct sqlite3_changegroup {
+  int rc;                         /* Error code */
+  int bPatch;                     /* True to accumulate patchsets */
+  SessionTable *pList;            /* List of tables in current patch */
+  SessionBuffer rec;
+
+  sqlite3 *db;                    /* Configured by changegroup_schema() */
+  char *zDb;                      /* Configured by changegroup_schema() */
+  ChangeData cd;                  /* Used by changegroup_change_xxx() APIs. */
+};
+
+/*
+** This function is called to merge two changes to the same row together as
+** part of an sqlite3changeset_concat() operation. A new change object is
+** allocated and a pointer to it stored in *ppNew.
+**
+** Because they have been vetted by sqlite3changegroup_add() or similar,
+** both the aRec[] change and the pExist change are safe to use without
+** checking for buffer overflows.
+*/
+static int sessionChangeMerge(
+  SessionTable *pTab,             /* Table structure */
+  int bRebase,                    /* True for a rebase hash-table */
+  int bPatchset,                  /* True for patchsets */
+  SessionChange *pExist,          /* Existing change */
+  int op2,                        /* Second change operation */
+  int bIndirect,                  /* True if second change is indirect */
+  u8 *aRec,                       /* Second change record */
+  int nRec,                       /* Number of bytes in aRec */
+  SessionChange **ppNew           /* OUT: Merged change */
+){
+  SessionChange *pNew = 0;
+  int rc = SQLITE_OK;
+  assert( aRec!=0 );
+
+  if( !pExist ){
+    pNew = (SessionChange *)sqlite3_malloc64(sizeof(SessionChange) + nRec);
+    if( !pNew ){
+      return SQLITE_NOMEM;
+    }
+    memset(pNew, 0, sizeof(SessionChange));
+    pNew->op = op2;
+    pNew->bIndirect = bIndirect;
+    pNew->aRecord = (u8*)&pNew[1];
+    if( bIndirect==0 || bRebase==0 ){
+      pNew->nRecord = nRec;
+      memcpy(pNew->aRecord, aRec, nRec);
+    }else{
+      int i;
+      u8 *pIn = aRec;
+      u8 *pOut = pNew->aRecord;
+      for(i=0; i<pTab->nCol; i++){
+        int nIn = sessionSerialLen(pIn);
+        if( *pIn==0 ){
+          *pOut++ = 0;
+        }else if( pTab->abPK[i]==0 ){
+          *pOut++ = 0xFF;
+        }else{
+          memcpy(pOut, pIn, nIn);
+          pOut += nIn;
+        }
+        pIn += nIn;
+      }
+      pNew->nRecord = pOut - pNew->aRecord;
+    }
+  }else if( bRebase ){
+    if( pExist->op==SQLITE_DELETE && pExist->bIndirect ){
+      *ppNew = pExist;
+    }else{
+      sqlite3_int64 nByte = nRec + pExist->nRecord + sizeof(SessionChange);
+      pNew = (SessionChange*)sqlite3_malloc64(nByte);
+      if( pNew==0 ){
+        rc = SQLITE_NOMEM;
+      }else{
+        int i;
+        u8 *a1 = pExist->aRecord;
+        u8 *a2 = aRec;
+        u8 *pOut;
+
+        memset(pNew, 0, nByte);
+        pNew->bIndirect = bIndirect || pExist->bIndirect;
+        pNew->op = op2;
+        pOut = pNew->aRecord = (u8*)&pNew[1];
+
+        for(i=0; i<pTab->nCol; i++){
+          int n1 = sessionSerialLen(a1);
+          int n2 = sessionSerialLen(a2);
+          if( *a1==0xFF || (pTab->abPK[i]==0 && bIndirect) ){
+            *pOut++ = 0xFF;
+          }else if( *a2==0 ){
+            memcpy(pOut, a1, n1);
+            pOut += n1;
+          }else{
+            memcpy(pOut, a2, n2);
+            pOut += n2;
+          }
+          a1 += n1;
+          a2 += n2;
+        }
+        pNew->nRecord = pOut - pNew->aRecord;
+      }
+      sqlite3_free(pExist);
+    }
+  }else{
+    int op1 = pExist->op;
+
+    /*
+    **   op1=INSERT, op2=INSERT      ->      Unsupported. Discard op2.
+    **   op1=INSERT, op2=UPDATE      ->      INSERT.
+    **   op1=INSERT, op2=DELETE      ->      (none)
+    **
+    **   op1=UPDATE, op2=INSERT      ->      Unsupported. Discard op2.
+    **   op1=UPDATE, op2=UPDATE      ->      UPDATE.
+    **   op1=UPDATE, op2=DELETE      ->      DELETE.
+    **
+    **   op1=DELETE, op2=INSERT      ->      UPDATE.
+    **   op1=DELETE, op2=UPDATE      ->      Unsupported. Discard op2.
+    **   op1=DELETE, op2=DELETE      ->      Unsupported. Discard op2.
+    */
+    if( (op1==SQLITE_INSERT && op2==SQLITE_INSERT)
+     || (op1==SQLITE_UPDATE && op2==SQLITE_INSERT)
+     || (op1==SQLITE_DELETE && op2==SQLITE_UPDATE)
+     || (op1==SQLITE_DELETE && op2==SQLITE_DELETE)
+    ){
+      pNew = pExist;
+    }else if( op1==SQLITE_INSERT && op2==SQLITE_DELETE ){
+      sqlite3_free(pExist);
+      assert( pNew==0 );
+    }else{
+      u8 *aExist = pExist->aRecord;
+      sqlite3_int64 nByte;
+      u8 *aCsr;
+
+      /* Allocate a new SessionChange object. Ensure that the aRecord[]
+      ** buffer of the new object is large enough to hold any record that
+      ** may be generated by combining the input records.  */
+      nByte = sizeof(SessionChange) + pExist->nRecord + nRec;
+      pNew = (SessionChange *)sqlite3_malloc64(nByte);
+      if( !pNew ){
+        sqlite3_free(pExist);
+        return SQLITE_NOMEM;
+      }
+      memset(pNew, 0, sizeof(SessionChange));
+      pNew->bIndirect = (bIndirect && pExist->bIndirect);
+      aCsr = pNew->aRecord = (u8 *)&pNew[1];
+
+      if( op1==SQLITE_INSERT ){             /* INSERT + UPDATE */
+        u8 *a1 = aRec;
+        assert( op2==SQLITE_UPDATE );
+        pNew->op = SQLITE_INSERT;
+        if( bPatchset==0 ) sessionSkipRecord(&a1, pTab->nCol);
+        sessionMergeRecord(&aCsr, pTab->nCol, aExist, a1);
+      }else if( op1==SQLITE_DELETE ){       /* DELETE + INSERT */
+        assert( op2==SQLITE_INSERT );
+        pNew->op = SQLITE_UPDATE;
+        if( bPatchset ){
+          memcpy(aCsr, aRec, nRec);
+          aCsr += nRec;
+        }else{
+          if( 0==sessionMergeUpdate(&aCsr, pTab, bPatchset, aExist,0,aRec,0) ){
+            sqlite3_free(pNew);
+            pNew = 0;
+          }
+        }
+      }else if( op2==SQLITE_UPDATE ){       /* UPDATE + UPDATE */
+        u8 *a1 = aExist;
+        u8 *a2 = aRec;
+        assert( op1==SQLITE_UPDATE );
+        if( bPatchset==0 ){
+          sessionSkipRecord(&a1, pTab->nCol);
+          sessionSkipRecord(&a2, pTab->nCol);
+        }
+        pNew->op = SQLITE_UPDATE;
+        if( 0==sessionMergeUpdate(&aCsr, pTab, bPatchset, aRec, aExist,a1,a2) ){
+          sqlite3_free(pNew);
+          pNew = 0;
+        }
+      }else{                                /* UPDATE + DELETE */
+        assert( op1==SQLITE_UPDATE && op2==SQLITE_DELETE );
+        pNew->op = SQLITE_DELETE;
+        if( bPatchset ){
+          memcpy(aCsr, aRec, nRec);
+          aCsr += nRec;
+        }else{
+          sessionMergeRecord(&aCsr, pTab->nCol, aRec, aExist);
+        }
+      }
+
+      if( pNew ){
+        pNew->nRecord = (int)(aCsr - pNew->aRecord);
+      }
+      sqlite3_free(pExist);
+    }
+  }
+
+  *ppNew = pNew;
+  return rc;
+}
+
+/*
+** Check if a changeset entry with nCol columns and the PK array passed
+** as the final argument to this function is compatible with SessionTable
+** pTab. If so, return 1. Otherwise, if they are incompatible in some way,
+** return 0.
+*/
+static int sessionChangesetCheckCompat(
+  SessionTable *pTab,
+  int nCol,
+  u8 *abPK
+){
+  if( pTab->azCol && nCol<pTab->nCol ){
+    int ii;
+    for(ii=0; ii<pTab->nCol; ii++){
+      u8 bPK = (ii < nCol) ? abPK[ii] : 0;
+      if( pTab->abPK[ii]!=bPK ) return 0;
+    }
+    return 1;
+  }
+  return (pTab->nCol==nCol && 0==memcmp(abPK, pTab->abPK, nCol));
+}
+
+static int sessionChangesetExtendRecord(
+  sqlite3_changegroup *pGrp,
+  SessionTable *pTab,
+  int nCol,
+  int op,
+  const u8 *aRec,
+  int nRec,
+  SessionBuffer *pOut
+){
+  int rc = SQLITE_OK;
+  int ii = 0;
+
+  assert( pTab->azCol );
+  assert( nCol<pTab->nCol );
+
+  pOut->nBuf = 0;
+  if( op==SQLITE_INSERT || (op==SQLITE_DELETE && pGrp->bPatch==0) ){
+    /* Append the missing default column values to the record. */
+    sessionAppendBlob(pOut, aRec, nRec, &rc);
+    if( rc==SQLITE_OK && pTab->pDfltStmt==0 ){
+      rc = sessionPrepareDfltStmt(pGrp->db, pTab, &pTab->pDfltStmt);
+      if( rc==SQLITE_OK && SQLITE_ROW!=sqlite3_step(pTab->pDfltStmt) ){
+        rc = sqlite3_errcode(pGrp->db);
+      }
+    }
+    for(ii=nCol; rc==SQLITE_OK && ii<pTab->nCol; ii++){
+      int eType = sqlite3_column_type(pTab->pDfltStmt, ii);
+      sessionAppendByte(pOut, eType, &rc);
+      switch( eType ){
+        case SQLITE_FLOAT:
+        case SQLITE_INTEGER: {
+          if( SQLITE_OK==sessionBufferGrow(pOut, 8, &rc) ){
+            if( eType==SQLITE_INTEGER ){
+              sqlite3_int64 iVal = sqlite3_column_int64(pTab->pDfltStmt, ii);
+              sessionPutI64(&pOut->aBuf[pOut->nBuf], iVal);
+            }else{
+              double rVal = sqlite3_column_double(pTab->pDfltStmt, ii);
+              sessionPutDouble(&pOut->aBuf[pOut->nBuf], rVal);
+            }
+            pOut->nBuf += 8;
+          }
+          break;
+        }
+
+        case SQLITE_BLOB:
+        case SQLITE_TEXT: {
+          int n = sqlite3_column_bytes(pTab->pDfltStmt, ii);
+          sessionAppendVarint(pOut, n, &rc);
+          if( eType==SQLITE_TEXT ){
+            const u8 *z = (const u8*)sqlite3_column_text(pTab->pDfltStmt, ii);
+            sessionAppendBlob(pOut, z, n, &rc);
+          }else{
+            const u8 *z = (const u8*)sqlite3_column_blob(pTab->pDfltStmt, ii);
+            sessionAppendBlob(pOut, z, n, &rc);
+          }
+          break;
+        }
+
+        default:
+          assert( eType==SQLITE_NULL );
+          break;
+      }
+    }
+  }else if( op==SQLITE_UPDATE ){
+    /* Append missing "undefined" entries to the old.* record. And, if this
+    ** is an UPDATE, to the new.* record as well.  */
+    int iOff = 0;
+    if( pGrp->bPatch==0 ){
+      for(ii=0; ii<nCol; ii++){
+        iOff += sessionSerialLen(&aRec[iOff]);
+      }
+      sessionAppendBlob(pOut, aRec, iOff, &rc);
+      for(ii=0; ii<(pTab->nCol-nCol); ii++){
+        sessionAppendByte(pOut, 0x00, &rc);
+      }
+    }
+
+    sessionAppendBlob(pOut, &aRec[iOff], nRec-iOff, &rc);
+    for(ii=0; ii<(pTab->nCol-nCol); ii++){
+      sessionAppendByte(pOut, 0x00, &rc);
+    }
+  }else{
+    assert( op==SQLITE_DELETE && pGrp->bPatch );
+    sessionAppendBlob(pOut, aRec, nRec, &rc);
+  }
+
+  return rc;
+}
+
+/*
+** Locate or create a SessionTable object that may be used to add the
+** change currently pointed to by iterator pIter to changegroup pGrp.
+** If successful, set output variable (*ppTab) to point to the table
+** object and return SQLITE_OK. Otherwise, if some error occurs, return
+** an SQLite error code and leave (*ppTab) set to NULL.
+*/
+static int sessionChangesetFindTable(
+  sqlite3_changegroup *pGrp,
+  const char *zTab,
+  sqlite3_changeset_iter *pIter,
+  SessionTable **ppTab
+){
+  int rc = SQLITE_OK;
+  SessionTable *pTab = 0;
+  int nTab = (int)strlen(zTab);
+  u8 *abPK = 0;
+  int nCol = 0;
+
+  *ppTab = 0;
+
+  /* Search the list for an existing table */
+  for(pTab = pGrp->pList; pTab; pTab=pTab->pNext){
+    if( 0==sqlite3_strnicmp(pTab->zName, zTab, nTab+1) ) break;
+  }
+
+
+  if( pIter ){
+    sqlite3changeset_pk(pIter, &abPK, &nCol);
+  }else if( !pTab && !pGrp->db ){
+    return SQLITE_OK;
+  }
+
+  /* If one was not found above, create a new table now */
+  if( !pTab ){
+    SessionTable **ppNew;
+
+    pTab = sqlite3_malloc64(sizeof(SessionTable) + nCol + nTab+1);
+    if( !pTab ){
+      return SQLITE_NOMEM;
+    }
+    memset(pTab, 0, sizeof(SessionTable));
+    pTab->nCol = nCol;
+    pTab->abPK = (u8*)&pTab[1];
+    if( nCol>0 ){
+      memcpy(pTab->abPK, abPK, nCol);
+    }
+    pTab->zName = (char*)&pTab->abPK[nCol];
+    memcpy(pTab->zName, zTab, nTab+1);
+
+    if( pGrp->db ){
+      pTab->nCol = 0;
+      rc = sessionInitTable(0, pTab, pGrp->db, pGrp->zDb);
+      if( rc || pTab->nCol==0 ){
+        sqlite3_free(pTab->azCol);
+        sqlite3_free(pTab);
+        return rc;
+      }
+    }
+
+    /* The new object must be linked on to the end of the list, not
+    ** simply added to the start of it. This is to ensure that the
+    ** tables within the output of sqlite3changegroup_output() are in
+    ** the right order.  */
+    for(ppNew=&pGrp->pList; *ppNew; ppNew=&(*ppNew)->pNext);
+    *ppNew = pTab;
+  }
+
+  /* Check that the table is compatible. */
+  if( pIter && !sessionChangesetCheckCompat(pTab, nCol, abPK) ){
+    rc = SQLITE_SCHEMA;
+  }
+
+  *ppTab = pTab;
+  return rc;
+}
+
+/*
+** Add a single change to the changegroup pGrp.
+*/
+static int sessionOneChangeToHash(
+  sqlite3_changegroup *pGrp,      /* Changegroup to update */
+  SessionTable *pTab,             /* Table change pertains to */
+  int op,                         /* One of SQLITE_INSERT, UPDATE, DELETE */
+  int bIndirect,                  /* True to flag change as "indirect" */
+  int nCol,                       /* Number of columns in record(s) */
+  u8 *aRec,                       /* Serialized change record(s) */
+  int nRec,                       /* Size of aRec[] in bytes */
+  int bRebase                     /* True if this is a rebase blob */
+){
+  int rc = SQLITE_OK;
+  int iHash = 0;
+  SessionChange *pChange = 0;
+  SessionChange *pExist = 0;
+  SessionChange **pp = 0;
+
+  assert( nRec>0 );
+
+  if( nCol<pTab->nCol ){
+    SessionBuffer *pBuf = &pGrp->rec;
+    rc = sessionChangesetExtendRecord(pGrp, pTab, nCol, op, aRec, nRec, pBuf);
+    aRec = pBuf->aBuf;
+    nRec = pBuf->nBuf;
+    assert( pGrp->db );
+  }
+
+  if( rc==SQLITE_OK && sessionGrowHash(0, pGrp->bPatch, pTab) ){
+    rc = SQLITE_NOMEM;
+  }
+
+  if( rc==SQLITE_OK ){
+    /* Search for existing entry. If found, remove it from the hash table.
+    ** Code below may link it back in.  */
+    iHash = sessionChangeHash(
+        pTab, (pGrp->bPatch && op==SQLITE_DELETE), aRec, pTab->nChange
+    );
+    for(pp=&pTab->apChange[iHash]; *pp; pp=&(*pp)->pNext){
+      int bPkOnly1 = 0;
+      int bPkOnly2 = 0;
+      if( pGrp->bPatch ){
+        bPkOnly1 = (*pp)->op==SQLITE_DELETE;
+        bPkOnly2 = op==SQLITE_DELETE;
+      }
+      if( sessionChangeEqual(pTab, bPkOnly1, (*pp)->aRecord, bPkOnly2, aRec) ){
+        pExist = *pp;
+        *pp = (*pp)->pNext;
+        pTab->nEntry--;
+        break;
+      }
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sessionChangeMerge(pTab, bRebase,
+        pGrp->bPatch, pExist, op, bIndirect, aRec, nRec, &pChange
+    );
+  }
+  if( rc==SQLITE_OK && pChange ){
+    pChange->pNext = pTab->apChange[iHash];
+    pTab->apChange[iHash] = pChange;
+    pTab->nEntry++;
+  }
+
+  return rc;
+}
+
+/*
+** Add the change currently indicated by iterator pIter to the hash table
+** belonging to changegroup pGrp.
+*/
+static int sessionOneChangeIterToHash(
+  sqlite3_changegroup *pGrp,
+  sqlite3_changeset_iter *pIter,
+  int bRebase
+){
+  u8 *aRec = &pIter->in.aData[pIter->in.iCurrent + 2];
+  int nRec = (pIter->in.iNext - pIter->in.iCurrent) - 2;
+  const char *zTab = 0;
+  int nCol = 0;
+  int op = 0;
+  int bIndirect = 0;
+  int rc = SQLITE_OK;
+  SessionTable *pTab = 0;
+
+  /* Ensure that only changesets, or only patchsets, but not a mixture
+  ** of both, are being combined. It is an error to try to combine a
+  ** changeset and a patchset.  */
+  if( pGrp->pList==0 ){
+    pGrp->bPatch = pIter->bPatchset;
+  }else if( pIter->bPatchset!=pGrp->bPatch ){
+    rc = SQLITE_ERROR;
+  }
+
+  if( rc==SQLITE_OK ){
+    sqlite3changeset_op(pIter, &zTab, &nCol, &op, &bIndirect);
+    rc = sessionChangesetFindTable(pGrp, zTab, pIter, &pTab);
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = sessionOneChangeToHash(
+        pGrp, pTab, op, bIndirect, nCol, aRec, nRec, bRebase
+    );
+  }
+
+  if( rc==SQLITE_OK ) rc = pIter->rc;
+  return rc;
+}
+
+/*
+** Add all changes in the changeset traversed by the iterator passed as
+** the first argument to the changegroup hash tables.
+*/
+static int sessionChangesetToHash(
+  sqlite3_changeset_iter *pIter,   /* Iterator to read from */
+  sqlite3_changegroup *pGrp,       /* Changegroup object to add changeset to */
+  int bRebase                      /* True if hash table is for rebasing */
+){
+  u8 *aRec;
+  int nRec;
+  int rc = SQLITE_OK;
+
+  pIter->in.bNoDiscard = 1;
+  while( SQLITE_ROW==(sessionChangesetNext(pIter, &aRec, &nRec, 0)) ){
+    if( bRebase && pIter->bPatchset ){
+      /* A patchset may not be used as a rebase */
+      rc = SQLITE_ERROR;
+    }else{
+      rc = sessionOneChangeIterToHash(pGrp, pIter, bRebase);
+    }
+    if( rc!=SQLITE_OK ) break;
+  }
+
+  if( rc==SQLITE_OK ) rc = pIter->rc;
+  return rc;
+}
+
+/*
+** Serialize a changeset (or patchset) based on all changesets (or patchsets)
+** added to the changegroup object passed as the first argument.
+**
+** If xOutput is not NULL, then the changeset/patchset is returned to the
+** user via one or more calls to xOutput, as with the other streaming
+** interfaces.
+**
+** Or, if xOutput is NULL, then (*ppOut) is populated with a pointer to a
+** buffer containing the output changeset before this function returns. In
+** this case (*pnOut) is set to the size of the output buffer in bytes. It
+** is the responsibility of the caller to free the output buffer using
+** sqlite3_free() when it is no longer required.
+**
+** If successful, SQLITE_OK is returned. Or, if an error occurs, an SQLite
+** error code. If an error occurs and xOutput is NULL, (*ppOut) and (*pnOut)
+** are both set to 0 before returning.
+*/
+static int sessionChangegroupOutput(
+  sqlite3_changegroup *pGrp,
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut,
+  int *pnOut,
+  void **ppOut
+){
+  int rc = SQLITE_OK;
+  SessionBuffer buf = {0, 0, 0};
+  SessionTable *pTab;
+  assert( xOutput==0 || (ppOut==0 && pnOut==0) );
+
+  /* Create the serialized output changeset based on the contents of the
+  ** hash tables attached to the SessionTable objects in list p->pList.
+  */
+  for(pTab=pGrp->pList; rc==SQLITE_OK && pTab; pTab=pTab->pNext){
+    int i;
+    if( pTab->nEntry==0 ) continue;
+
+    sessionAppendTableHdr(&buf, pGrp->bPatch, pTab, &rc);
+    for(i=0; i<pTab->nChange; i++){
+      SessionChange *p;
+      for(p=pTab->apChange[i]; p; p=p->pNext){
+        sessionAppendByte(&buf, p->op, &rc);
+        sessionAppendByte(&buf, p->bIndirect, &rc);
+        sessionAppendBlob(&buf, p->aRecord, p->nRecord, &rc);
+        if( rc==SQLITE_OK && xOutput && buf.nBuf>=sessions_strm_chunk_size ){
+          rc = xOutput(pOut, buf.aBuf, buf.nBuf);
+          buf.nBuf = 0;
+        }
+      }
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    if( xOutput ){
+      if( buf.nBuf>0 ) rc = xOutput(pOut, buf.aBuf, buf.nBuf);
+    }else if( ppOut ){
+      *ppOut = buf.aBuf;
+      if( pnOut ) *pnOut = buf.nBuf;
+      buf.aBuf = 0;
+    }
+  }
+  sqlite3_free(buf.aBuf);
+
+  return rc;
+}
+
+/*
+** Allocate a new, empty, sqlite3_changegroup.
+*/
+SQLITE_API int sqlite3changegroup_new(sqlite3_changegroup **pp){
+  int rc = SQLITE_OK;             /* Return code */
+  sqlite3_changegroup *p;         /* New object */
+  p = (sqlite3_changegroup*)sqlite3_malloc(sizeof(sqlite3_changegroup));
+  if( p==0 ){
+    rc = SQLITE_NOMEM;
+  }else{
+    memset(p, 0, sizeof(sqlite3_changegroup));
+  }
+  *pp = p;
+  return rc;
+}
+
+/*
+** Configure a changegroup object.
+*/
+SQLITE_API int sqlite3changegroup_config(
+  sqlite3_changegroup *pGrp,
+  int op,
+  void *pArg
+){
+  int rc = SQLITE_OK;
+
+  switch( op ){
+    case SQLITE_CHANGEGROUP_CONFIG_PATCHSET: {
+      int arg = *(int*)pArg;
+      if( pGrp->pList==0  && arg>=0 ){
+        pGrp->bPatch = (arg>0);
+      }
+      *(int*)pArg = pGrp->bPatch;
+      break;
+    }
+    default:
+      rc = SQLITE_MISUSE;
+      break;
+  }
+
+  return rc;
+}
+
+/*
+** Provide a database schema to the changegroup object.
+*/
+SQLITE_API int sqlite3changegroup_schema(
+  sqlite3_changegroup *pGrp,
+  sqlite3 *db,
+  const char *zDb
+){
+  int rc = SQLITE_OK;
+
+  if( pGrp->pList || pGrp->db ){
+    /* Cannot add a schema after one or more calls to sqlite3changegroup_add(),
+    ** or after sqlite3changegroup_schema() has already been called. */
+    rc = SQLITE_MISUSE;
+  }else{
+    pGrp->zDb = sqlite3_mprintf("%s", zDb);
+    if( pGrp->zDb==0 ){
+      rc = SQLITE_NOMEM;
+    }else{
+      pGrp->db = db;
+    }
+  }
+  return rc;
+}
+
+/*
+** Add the changeset currently stored in buffer pData, size nData bytes,
+** to changeset-group p.
+*/
+SQLITE_API int sqlite3changegroup_add(sqlite3_changegroup *pGrp, int nData, void *pData){
+  sqlite3_changeset_iter *pIter;  /* Iterator opened on pData/nData */
+  int rc;                         /* Return code */
+
+  rc = sqlite3changeset_start(&pIter, nData, pData);
+  if( rc==SQLITE_OK ){
+    rc = sessionChangesetToHash(pIter, pGrp, 0);
+  }
+  sqlite3changeset_finalize(pIter);
+  return rc;
+}
+
+/*
+** Add a single change to a changeset-group.
+*/
+SQLITE_API int sqlite3changegroup_add_change(
+  sqlite3_changegroup *pGrp,
+  sqlite3_changeset_iter *pIter
+){
+  int rc = SQLITE_OK;
+
+  if( pIter->in.iCurrent==pIter->in.iNext
+   || pIter->rc!=SQLITE_OK
+   || pIter->bInvert
+  ){
+    /* Iterator does not point to any valid entry or is an INVERT iterator. */
+    rc = SQLITE_ERROR;
+  }else{
+    pIter->in.bNoDiscard = 1;
+    rc = sessionOneChangeIterToHash(pGrp, pIter, 0);
+  }
+  return rc;
+}
+
+/*
+** Obtain a buffer containing a changeset representing the concatenation
+** of all changesets added to the group so far.
+*/
+SQLITE_API int sqlite3changegroup_output(
+    sqlite3_changegroup *pGrp,
+    int *pnData,
+    void **ppData
+){
+  return sessionChangegroupOutput(pGrp, 0, 0, pnData, ppData);
+}
+
+/*
+** Streaming versions of changegroup_add().
+*/
+SQLITE_API int sqlite3changegroup_add_strm(
+  sqlite3_changegroup *pGrp,
+  int (*xInput)(void *pIn, void *pData, int *pnData),
+  void *pIn
+){
+  sqlite3_changeset_iter *pIter;  /* Iterator opened on pData/nData */
+  int rc;                         /* Return code */
+
+  rc = sqlite3changeset_start_strm(&pIter, xInput, pIn);
+  if( rc==SQLITE_OK ){
+    rc = sessionChangesetToHash(pIter, pGrp, 0);
+  }
+  sqlite3changeset_finalize(pIter);
+  return rc;
+}
+
+/*
+** Streaming versions of changegroup_output().
+*/
+SQLITE_API int sqlite3changegroup_output_strm(
+  sqlite3_changegroup *pGrp,
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut
+){
+  return sessionChangegroupOutput(pGrp, xOutput, pOut, 0, 0);
+}
+
+/*
+** Delete a changegroup object.
+*/
+SQLITE_API void sqlite3changegroup_delete(sqlite3_changegroup *pGrp){
+  if( pGrp ){
+    int ii;
+    for(ii=0; ii<pGrp->cd.nBufAlloc; ii++){
+      sqlite3_free(pGrp->cd.aBuf[ii].aBuf);
+    }
+    sqlite3_free(pGrp->cd.record.aBuf);
+    sqlite3_free(pGrp->cd.aBuf);
+    sqlite3_free(pGrp->zDb);
+    sessionDeleteTable(0, pGrp->pList);
+    sqlite3_free(pGrp->rec.aBuf);
+    sqlite3_free(pGrp);
+  }
+}
+
+/*
+** Combine two changesets together.
+*/
+SQLITE_API int sqlite3changeset_concat(
+  int nLeft,                      /* Number of bytes in lhs input */
+  void *pLeft,                    /* Lhs input changeset */
+  int nRight                      /* Number of bytes in rhs input */,
+  void *pRight,                   /* Rhs input changeset */
+  int *pnOut,                     /* OUT: Number of bytes in output changeset */
+  void **ppOut                    /* OUT: changeset (left <concat> right) */
+){
+  sqlite3_changegroup *pGrp;
+  int rc;
+
+  rc = sqlite3changegroup_new(&pGrp);
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_add(pGrp, nLeft, pLeft);
+  }
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_add(pGrp, nRight, pRight);
+  }
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_output(pGrp, pnOut, ppOut);
+  }
+  sqlite3changegroup_delete(pGrp);
+
+  return rc;
+}
+
+/*
+** Streaming version of sqlite3changeset_concat().
+*/
+SQLITE_API int sqlite3changeset_concat_strm(
+  int (*xInputA)(void *pIn, void *pData, int *pnData),
+  void *pInA,
+  int (*xInputB)(void *pIn, void *pData, int *pnData),
+  void *pInB,
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut
+){
+  sqlite3_changegroup *pGrp;
+  int rc;
+
+  rc = sqlite3changegroup_new(&pGrp);
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_add_strm(pGrp, xInputA, pInA);
+  }
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_add_strm(pGrp, xInputB, pInB);
+  }
+  if( rc==SQLITE_OK ){
+    rc = sqlite3changegroup_output_strm(pGrp, xOutput, pOut);
+  }
+  sqlite3changegroup_delete(pGrp);
+
+  return rc;
+}
+
+/*
+** Changeset rebaser handle.
+*/
+struct sqlite3_rebaser {
+  sqlite3_changegroup grp;        /* Hash table */
+};
+
+/*
+** Buffers a1 and a2 must both contain a sessions module record nCol
+** fields in size. This function appends an nCol sessions module
+** record to buffer pBuf that is a copy of a1, except that for
+** each field that is undefined in a1[], swap in the field from a2[].
+*/
+static void sessionAppendRecordMerge(
+  SessionBuffer *pBuf,            /* Buffer to append to */
+  int nCol,                       /* Number of columns in each record */
+  u8 *a1, int n1,                 /* Record 1 */
+  u8 *a2, int n2,                 /* Record 2 */
+  int *pRc                        /* IN/OUT: error code */
+){
+  u8 *a1Eof = &a1[n1];
+  u8 *a2Eof = &a2[n2];
+
+  sessionBufferGrow(pBuf, (i64)n1+n2, pRc);
+  if( *pRc==SQLITE_OK ){
+    int i;
+    u8 *pOut = &pBuf->aBuf[pBuf->nBuf];
+    for(i=0; i<nCol; i++){
+      int nn1 = (a1<a1Eof ? sessionSerialLen(a1) : 0);
+      int nn2 = (a2<a2Eof ? sessionSerialLen(a2) : 0);
+      if( nn1==0 || (nn2>0 && (*a1==0 || *a1==0xFF)) ){
+        memcpy(pOut, a2, nn2);
+        pOut += nn2;
+      }else{
+        memcpy(pOut, a1, nn1);
+        pOut += nn1;
+      }
+      a1 += nn1;
+      a2 += nn2;
+    }
+
+    pBuf->nBuf = pOut-pBuf->aBuf;
+    assert( pBuf->nBuf<=pBuf->nAlloc );
+  }
+}
+
+/*
+** This function is called when rebasing a local UPDATE change against one
+** or more remote UPDATE changes. The aRec/nRec buffer contains the current
+** old.* and new.* records for the change. The rebase buffer (a single
+** record) is in aChange/nChange. The rebased change is appended to buffer
+** pBuf.
+**
+** Rebasing the UPDATE involves:
+**
+**   * Removing any changes to fields for which the corresponding field
+**     in the rebase buffer is set to "replaced" (type 0xFF). If this
+**     means the UPDATE change updates no fields, nothing is appended
+**     to the output buffer.
+**
+**   * For each field modified by the local change for which the
+**     corresponding field in the rebase buffer is not "undefined" (0x00)
+**     or "replaced" (0xFF), the old.* value is replaced by the value
+**     in the rebase buffer.
+*/
+static void sessionAppendPartialUpdate(
+  SessionBuffer *pBuf,            /* Append record here */
+  sqlite3_changeset_iter *pIter,  /* Iterator pointed at local change */
+  u8 *aRec, int nRec,             /* Local change */
+  u8 *aChange, int nChange,       /* Record to rebase against */
+  int *pRc                        /* IN/OUT: Return Code */
+){
+  sessionBufferGrow(pBuf, (i64)2+nRec+nChange, pRc);
+  if( *pRc==SQLITE_OK ){
+    int bData = 0;
+    u8 *pOut = &pBuf->aBuf[pBuf->nBuf];
+    int i;
+    u8 *a1 = aRec;
+    u8 *a2 = aChange;
+    u8 *a2Eof = &a2[nChange];
+
+    *pOut++ = SQLITE_UPDATE;
+    *pOut++ = pIter->bIndirect;
+    for(i=0; i<pIter->nCol; i++){
+      int n1 = sessionSerialLen(a1);
+      int n2 = (a2>=a2Eof) ? 0 : sessionSerialLen(a2);
+      if( n2<=0 || pIter->abPK[i] || a2[0]==0 ){
+        if( !pIter->abPK[i] && a1[0] ) bData = 1;
+        memcpy(pOut, a1, n1);
+        pOut += n1;
+      }else if( a2[0]!=0xFF && a1[0] ){
+        bData = 1;
+        memcpy(pOut, a2, n2);
+        pOut += n2;
+      }else{
+        *pOut++ = '\0';
+      }
+      a1 += n1;
+      a2 += n2;
+    }
+    if( bData ){
+      a2 = aChange;
+      for(i=0; i<pIter->nCol; i++){
+        int n1 = sessionSerialLen(a1);
+        int n2 = sessionSerialLen(a2);
+        if( pIter->abPK[i] || a2[0]!=0xFF ){
+          memcpy(pOut, a1, n1);
+          pOut += n1;
+        }else{
+          *pOut++ = '\0';
+        }
+        a1 += n1;
+        a2 += n2;
+      }
+      pBuf->nBuf = (pOut - pBuf->aBuf);
+    }
+  }
+}
+
+/*
+** pIter is configured to iterate through a changeset. This function rebases
+** that changeset according to the current configuration of the rebaser
+** object passed as the first argument. If no error occurs and argument xOutput
+** is not NULL, then the changeset is returned to the caller by invoking
+** xOutput zero or more times and SQLITE_OK returned. Or, if xOutput is NULL,
+** then (*ppOut) is set to point to a buffer containing the rebased changeset
+** before this function returns. In this case (*pnOut) is set to the size of
+** the buffer in bytes.  It is the responsibility of the caller to eventually
+** free the (*ppOut) buffer using sqlite3_free().
+**
+** If an error occurs, an SQLite error code is returned. If ppOut and
+** pnOut are not NULL, then the two output parameters are set to 0 before
+** returning.
+*/
+static int sessionRebase(
+  sqlite3_rebaser *p,             /* Rebaser hash table */
+  sqlite3_changeset_iter *pIter,  /* Input data */
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut,                     /* Context for xOutput callback */
+  int *pnOut,                     /* OUT: Number of bytes in output changeset */
+  void **ppOut                    /* OUT: Inverse of pChangeset */
+){
+  int rc = SQLITE_OK;
+  u8 *aRec = 0;
+  int nRec = 0;
+  int bNew = 0;
+  SessionTable *pTab = 0;
+  SessionBuffer sOut = {0,0,0};
+
+  while( SQLITE_ROW==sessionChangesetNext(pIter, &aRec, &nRec, &bNew) ){
+    SessionChange *pChange = 0;
+    int bDone = 0;
+
+    if( bNew ){
+      const char *zTab = pIter->zTab;
+      for(pTab=p->grp.pList; pTab; pTab=pTab->pNext){
+        if( 0==sqlite3_stricmp(pTab->zName, zTab) ) break;
+      }
+      bNew = 0;
+
+      /* A patchset may not be rebased */
+      if( pIter->bPatchset ){
+        rc = SQLITE_ERROR;
+      }
+
+      /* Append a table header to the output for this new table */
+      sessionAppendByte(&sOut, pIter->bPatchset ? 'P' : 'T', &rc);
+      sessionAppendVarint(&sOut, pIter->nCol, &rc);
+      sessionAppendBlob(&sOut, pIter->abPK, pIter->nCol, &rc);
+      sessionAppendBlob(&sOut,(u8*)pIter->zTab,(int)strlen(pIter->zTab)+1,&rc);
+    }
+
+    if( pTab && rc==SQLITE_OK ){
+      int iHash = sessionChangeHash(pTab, 0, aRec, pTab->nChange);
+
+      for(pChange=pTab->apChange[iHash]; pChange; pChange=pChange->pNext){
+        if( sessionChangeEqual(pTab, 0, aRec, 0, pChange->aRecord) ){
+          break;
+        }
+      }
+    }
+
+    if( pChange ){
+      assert( pChange->op==SQLITE_DELETE || pChange->op==SQLITE_INSERT );
+      switch( pIter->op ){
+        case SQLITE_INSERT:
+          if( pChange->op==SQLITE_INSERT ){
+            bDone = 1;
+            if( pChange->bIndirect==0 ){
+              sessionAppendByte(&sOut, SQLITE_UPDATE, &rc);
+              sessionAppendByte(&sOut, pIter->bIndirect, &rc);
+              sessionAppendBlob(&sOut, pChange->aRecord, pChange->nRecord, &rc);
+              sessionAppendBlob(&sOut, aRec, nRec, &rc);
+            }
+          }
+          break;
+
+        case SQLITE_UPDATE:
+          bDone = 1;
+          if( pChange->op==SQLITE_DELETE ){
+            if( pChange->bIndirect==0 ){
+              u8 *pCsr = aRec;
+              sessionSkipRecord(&pCsr, pIter->nCol);
+              sessionAppendByte(&sOut, SQLITE_INSERT, &rc);
+              sessionAppendByte(&sOut, pIter->bIndirect, &rc);
+              sessionAppendRecordMerge(&sOut, pIter->nCol,
+                  pCsr, nRec-(pCsr-aRec),
+                  pChange->aRecord, pChange->nRecord, &rc
+              );
+            }
+          }else{
+            sessionAppendPartialUpdate(&sOut, pIter,
+                aRec, nRec, pChange->aRecord, pChange->nRecord, &rc
+            );
+          }
+          break;
+
+        default:
+          assert( pIter->op==SQLITE_DELETE );
+          bDone = 1;
+          if( pChange->op==SQLITE_INSERT ){
+            sessionAppendByte(&sOut, SQLITE_DELETE, &rc);
+            sessionAppendByte(&sOut, pIter->bIndirect, &rc);
+            sessionAppendRecordMerge(&sOut, pIter->nCol,
+                pChange->aRecord, pChange->nRecord, aRec, nRec, &rc
+            );
+          }
+          break;
+      }
+    }
+
+    if( bDone==0 ){
+      sessionAppendByte(&sOut, pIter->op, &rc);
+      sessionAppendByte(&sOut, pIter->bIndirect, &rc);
+      sessionAppendBlob(&sOut, aRec, nRec, &rc);
+    }
+    if( rc==SQLITE_OK && xOutput && sOut.nBuf>sessions_strm_chunk_size ){
+      rc = xOutput(pOut, sOut.aBuf, sOut.nBuf);
+      sOut.nBuf = 0;
+    }
+    if( rc ) break;
+  }
+
+  if( rc!=SQLITE_OK ){
+    sqlite3_free(sOut.aBuf);
+    memset(&sOut, 0, sizeof(sOut));
+  }
+
+  if( rc==SQLITE_OK ){
+    if( xOutput ){
+      if( sOut.nBuf>0 ){
+        rc = xOutput(pOut, sOut.aBuf, sOut.nBuf);
+      }
+    }else if( ppOut ){
+      *ppOut = (void*)sOut.aBuf;
+      *pnOut = sOut.nBuf;
+      sOut.aBuf = 0;
+    }
+  }
+  sqlite3_free(sOut.aBuf);
+  return rc;
+}
+
+/*
+** Create a new rebaser object.
+*/
+SQLITE_API int sqlite3rebaser_create(sqlite3_rebaser **ppNew){
+  int rc = SQLITE_OK;
+  sqlite3_rebaser *pNew;
+
+  pNew = sqlite3_malloc(sizeof(sqlite3_rebaser));
+  if( pNew==0 ){
+    rc = SQLITE_NOMEM;
+  }else{
+    memset(pNew, 0, sizeof(sqlite3_rebaser));
+  }
+  *ppNew = pNew;
+  return rc;
+}
+
+/*
+** Call this one or more times to configure a rebaser.
+*/
+SQLITE_API int sqlite3rebaser_configure(
+  sqlite3_rebaser *p,
+  int nRebase, const void *pRebase
+){
+  int rc;                              /* Return code */
+  sqlite3_changeset_iter *pIter = 0;   /* Iterator opened on pData/nData */
+  rc = sqlite3changeset_start(&pIter, nRebase, (void*)pRebase);
+  if( rc==SQLITE_OK ){
+    rc = sessionChangesetToHash(pIter, &p->grp, 1);
+  }
+  sqlite3changeset_finalize(pIter);
+  return rc;
+}
+
+/*
+** Rebase a changeset according to current rebaser configuration
+*/
+SQLITE_API int sqlite3rebaser_rebase(
+  sqlite3_rebaser *p,
+  int nIn, const void *pIn,
+  int *pnOut, void **ppOut
+){
+  sqlite3_changeset_iter *pIter = 0;   /* Iterator to skip through input */
+  int rc = sqlite3changeset_start(&pIter, nIn, (void*)pIn);
+
+  if( rc==SQLITE_OK ){
+    rc = sessionRebase(p, pIter, 0, 0, pnOut, ppOut);
+    sqlite3changeset_finalize(pIter);
+  }
+
+  return rc;
+}
+
+/*
+** Rebase a changeset according to current rebaser configuration
+*/
+SQLITE_API int sqlite3rebaser_rebase_strm(
+  sqlite3_rebaser *p,
+  int (*xInput)(void *pIn, void *pData, int *pnData),
+  void *pIn,
+  int (*xOutput)(void *pOut, const void *pData, int nData),
+  void *pOut
+){
+  sqlite3_changeset_iter *pIter = 0;   /* Iterator to skip through input */
+  int rc = sqlite3changeset_start_strm(&pIter, xInput, pIn);
+
+  if( rc==SQLITE_OK ){
+    rc = sessionRebase(p, pIter, xOutput, pOut, 0, 0);
+    sqlite3changeset_finalize(pIter);
+  }
+
+  return rc;
+}
+
+/*
+** Destroy a rebaser object
+*/
+SQLITE_API void sqlite3rebaser_delete(sqlite3_rebaser *p){
+  if( p ){
+    sessionDeleteTable(0, p->grp.pList);
+    sqlite3_free(p->grp.rec.aBuf);
+    sqlite3_free(p);
+  }
+}
+
+/*
+** Global configuration
+*/
+SQLITE_API int sqlite3session_config(int op, void *pArg){
+  int rc = SQLITE_OK;
+  switch( op ){
+    case SQLITE_SESSION_CONFIG_STRMSIZE: {
+      int *pInt = (int*)pArg;
+      if( *pInt>0 ){
+        sessions_strm_chunk_size = *pInt;
+      }
+      *pInt = sessions_strm_chunk_size;
+      break;
+    }
+    default:
+      rc = SQLITE_MISUSE;
+      break;
+  }
+  return rc;
+}
+
+/*
+** Begin adding a change to a changegroup object.
+*/
+SQLITE_API int sqlite3changegroup_change_begin(
+  sqlite3_changegroup *pGrp,
+  int eOp,
+  const char *zTab,
+  int bIndirect,
+  char **pzErr
+){
+  SessionTable *pTab = 0;
+  int rc = SQLITE_OK;
+
+  if( pGrp->cd.pTab ){
+    rc = SQLITE_MISUSE;
+  }else if( eOp!=SQLITE_INSERT && eOp!=SQLITE_UPDATE && eOp!=SQLITE_DELETE ){
+    rc = SQLITE_ERROR;
+  }else{
+    rc = sessionChangesetFindTable(pGrp, zTab, 0, &pTab);
+  }
+  if( rc==SQLITE_OK ){
+    if( pTab==0 ){
+      if( pzErr ){
+        *pzErr = sqlite3_mprintf("no such table: %s", zTab);
+      }
+      rc = SQLITE_ERROR;
+    }else{
+      int nReq = pTab->nCol * (eOp==SQLITE_UPDATE ? 2 : 1);
+      pGrp->cd.pTab = pTab;
+      pGrp->cd.eOp = eOp;
+      pGrp->cd.bIndirect = bIndirect;
+
+      if( pGrp->cd.nBufAlloc<nReq ){
+        SessionBuffer *aBuf = (SessionBuffer*)sqlite3_realloc(
+            pGrp->cd.aBuf, nReq * sizeof(SessionBuffer)
+        );
+        if( aBuf==0 ){
+          rc = SQLITE_NOMEM;
+        }else{
+          memset(&aBuf[pGrp->cd.nBufAlloc], 0,
+              sizeof(SessionBuffer) * (nReq - pGrp->cd.nBufAlloc)
+          );
+          pGrp->cd.aBuf = aBuf;
+          pGrp->cd.nBufAlloc = nReq;
+        }
+      }
+
+#ifdef SQLITE_DEBUG
+      {
+        /* Assert that all column values are currently undefined */
+        int ii;
+        for(ii=0; ii<pGrp->cd.nBufAlloc; ii++){
+          assert( pGrp->cd.aBuf[ii].nBuf==0 );
+        }
+      }
+#endif
+    }
+  }
+
+  return rc;
+}
+
+/*
+** This function does processing common to the _change_int64(), _change_text()
+** and other similar APIs.
+*/
+static int checkChangeParams(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol,
+  sqlite3_int64 nReq,
+  SessionBuffer **ppBuf
+){
+  int rc = SQLITE_OK;
+  if( pGrp->cd.pTab==0 ){
+    rc = SQLITE_MISUSE;
+  }else if( iCol<0 || iCol>=pGrp->cd.pTab->nCol ){
+    rc = SQLITE_RANGE;
+  }else if(
+      (bNew && pGrp->cd.eOp==SQLITE_DELETE)
+   || (!bNew && pGrp->cd.eOp==SQLITE_INSERT)
+  ){
+    rc = SQLITE_ERROR;
+  }else{
+    SessionBuffer *pBuf = &pGrp->cd.aBuf[iCol];
+    if( pGrp->cd.eOp==SQLITE_UPDATE && bNew ){
+      pBuf += pGrp->cd.pTab->nCol;
+    }
+    pBuf->nBuf = 0;
+    sessionBufferGrow(pBuf, nReq, &rc);
+    pBuf->nBuf = nReq;
+    *ppBuf = pBuf;
+  }
+  return rc;
+}
+
+/*
+** Configure the change currently under construction with an integer value.
+*/
+SQLITE_API int sqlite3changegroup_change_int64(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol,
+  sqlite3_int64 iVal
+){
+  int rc = SQLITE_OK;
+  SessionBuffer *pBuf = 0;
+
+  if( SQLITE_OK!=(rc = checkChangeParams(pGrp, bNew, iCol, 9, &pBuf)) ){
+    return rc;
+  }
+
+  pBuf->aBuf[0] = SQLITE_INTEGER;
+  sessionPutI64(&pBuf->aBuf[1], iVal);
+  return SQLITE_OK;
+}
+
+/*
+** Configure the change currently under construction with a null value.
+*/
+SQLITE_API int sqlite3changegroup_change_null(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol
+){
+  int rc = SQLITE_OK;
+  SessionBuffer *pBuf = 0;
+
+  if( SQLITE_OK!=(rc = checkChangeParams(pGrp, bNew, iCol, 1, &pBuf)) ){
+    return rc;
+  }
+
+  pBuf->aBuf[0] = SQLITE_NULL;
+  return SQLITE_OK;
+}
+
+/*
+** Configure the change currently under construction with a real value.
+*/
+SQLITE_API int sqlite3changegroup_change_double(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol,
+  double fVal
+){
+  int rc = SQLITE_OK;
+  SessionBuffer *pBuf = 0;
+
+  if( SQLITE_OK!=(rc = checkChangeParams(pGrp, bNew, iCol, 9, &pBuf)) ){
+    return rc;
+  }
+
+  pBuf->aBuf[0] = SQLITE_FLOAT;
+  sessionPutDouble(&pBuf->aBuf[1], fVal);
+  return SQLITE_OK;
+}
+
+/*
+** Configure the change currently under construction with a text value.
+*/
+SQLITE_API int sqlite3changegroup_change_text(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol,
+  const char *pVal,
+  int nVal
+){
+  int nText = nVal>=0 ? nVal : strlen(pVal);
+  sqlite3_int64 nByte = 1 + sessionVarintLen(nText) + nText;
+  int rc = SQLITE_OK;
+  SessionBuffer *pBuf = 0;
+
+  if( SQLITE_OK!=(rc = checkChangeParams(pGrp, bNew, iCol, nByte, &pBuf)) ){
+    return rc;
+  }
+
+  pBuf->aBuf[0] = SQLITE_TEXT;
+  pBuf->nBuf = (1 + sessionVarintPut(&pBuf->aBuf[1], nText));
+  memcpy(&pBuf->aBuf[pBuf->nBuf], pVal, nText);
+  pBuf->nBuf += nText;
+
+  return SQLITE_OK;
+}
+
+/*
+** Configure the change currently under construction with a blob value.
+*/
+SQLITE_API int sqlite3changegroup_change_blob(
+  sqlite3_changegroup *pGrp,
+  int bNew,
+  int iCol,
+  const void *pVal,
+  int nVal
+){
+  sqlite3_int64 nByte = 1 + sessionVarintLen(nVal) + (i64)nVal;
+  int rc = SQLITE_OK;
+  SessionBuffer *pBuf = 0;
+
+  if( SQLITE_OK!=(rc = checkChangeParams(pGrp, bNew, iCol, nByte, &pBuf)) ){
+    return rc;
+  }
+
+  pBuf->aBuf[0] = SQLITE_BLOB;
+  pBuf->nBuf = (1 + sessionVarintPut(&pBuf->aBuf[1], nVal));
+  memcpy(&pBuf->aBuf[pBuf->nBuf], pVal, nVal);
+  pBuf->nBuf += nVal;
+
+  return SQLITE_OK;
+}
+
+/*
+** Finish any change currently being constructed by the changegroup object.
+*/
+SQLITE_API int sqlite3changegroup_change_finish(
+  sqlite3_changegroup *pGrp,
+  int bDiscard,
+  char **pzErr
+){
+  int rc = SQLITE_OK;
+  if( pGrp->cd.pTab ){
+    SessionBuffer *aBuf = pGrp->cd.aBuf;
+    int ii;
+
+    if( bDiscard==0 ){
+      int nBuf = pGrp->cd.pTab->nCol;
+      u8 eUndef = SQLITE_NULL;
+      if( pGrp->cd.eOp==SQLITE_UPDATE ){
+        for(ii=0; ii<nBuf; ii++){
+          if( pGrp->cd.pTab->abPK[ii] ){
+            if( aBuf[ii].nBuf<=1 ){
+              *pzErr = sqlite3_mprintf(
+                  "invalid change: %s value in PK of old.* record",
+                  aBuf[ii].nBuf==1 ? "null" : "undefined"
+              );
+              rc = SQLITE_ERROR;
+              break;
+            }else if( aBuf[ii + nBuf].nBuf>0 ){
+              *pzErr = sqlite3_mprintf(
+                  "invalid change: defined value in PK of new.* record"
+              );
+              rc = SQLITE_ERROR;
+              break;
+            }
+          }else
+          if( pGrp->bPatch==0 && (aBuf[ii].nBuf>0)!=(aBuf[ii+nBuf].nBuf>0) ){
+            *pzErr = sqlite3_mprintf(
+                "invalid change: column %d "
+                "- old.* value is %sdefined but new.* is %sdefined",
+                ii, aBuf[ii].nBuf ? "" : "un", aBuf[ii+nBuf].nBuf ? "" : "un"
+            );
+            rc = SQLITE_ERROR;
+            break;
+          }
+        }
+        eUndef = 0x00;
+        if( pGrp->bPatch==0 ) nBuf = nBuf * 2;
+      }else{
+        for(ii=0; ii<nBuf; ii++){
+          int isPK = pGrp->cd.pTab->abPK[ii];
+          if( (pGrp->cd.eOp==SQLITE_INSERT || pGrp->bPatch==0 || isPK)
+           && aBuf[ii].nBuf==0
+          ){
+            *pzErr = sqlite3_mprintf(
+                "invalid change: column %d is undefined", ii
+            );
+            rc = SQLITE_ERROR;
+            break;
+          }
+          if( aBuf[ii].nBuf==1 && isPK ){
+            *pzErr = sqlite3_mprintf(
+                "invalid change: null value in PK"
+            );
+            rc = SQLITE_ERROR;
+            break;
+          }
+        }
+      }
+
+      pGrp->cd.record.nBuf = 0;
+      for(ii=0; ii<nBuf; ii++){
+        SessionBuffer *p = &pGrp->cd.aBuf[ii];
+        if( pGrp->bPatch ){
+          if( pGrp->cd.pTab->abPK[ii]==0 ){
+            if( pGrp->cd.eOp==SQLITE_UPDATE ){
+              p += pGrp->cd.pTab->nCol;
+            }else if( pGrp->cd.eOp==SQLITE_DELETE ){
+              continue;
+            }
+          }
+        }
+        if( 0==sessionBufferGrow(&pGrp->cd.record, p->nBuf?p->nBuf:1, &rc) ){
+          if( p->nBuf ){
+            memcpy(&pGrp->cd.record.aBuf[pGrp->cd.record.nBuf],p->aBuf,p->nBuf);
+            pGrp->cd.record.nBuf += p->nBuf;
+          }else{
+            pGrp->cd.record.aBuf[pGrp->cd.record.nBuf++] = eUndef;
+          }
+        }
+      }
+      if( rc==SQLITE_OK ){
+        rc = sessionOneChangeToHash(
+            pGrp, pGrp->cd.pTab,
+            pGrp->cd.eOp, pGrp->cd.bIndirect, pGrp->cd.pTab->nCol,
+            pGrp->cd.record.aBuf, pGrp->cd.record.nBuf, 0
+        );
+      }
+    }
+
+    /* Reset all aBuf[] entries to "undefined". */
+    {
+      int nZero = pGrp->cd.pTab->nCol;
+      if( pGrp->cd.eOp==SQLITE_UPDATE ) nZero += nZero;
+      for(ii=0; ii<nZero; ii++){
+        pGrp->cd.aBuf[ii].nBuf = 0;
+      }
+    }
+    pGrp->cd.pTab = 0;
+  }
+
+  return rc;
+}
+
+#endif /* SQLITE_ENABLE_SESSION && SQLITE_ENABLE_PREUPDATE_HOOK */
+
+/************** End of sqlite3session.c **************************************/
+/************** Begin file fts5.c ********************************************/
+
+/*
+** This, the "fts5.c" source file, is a composite file that is itself
+** assembled from the following files:
+**
+**    fts5.h
+**    fts5Int.h
+**    fts5parse.h          <--- Generated from fts5parse.y by Lemon
+**    fts5parse.c          <--- Generated from fts5parse.y by Lemon
+**    fts5_aux.c
+**    fts5_buffer.c
+**    fts5_config.c
+**    fts5_expr.c
+**    fts5_hash.c
+**    fts5_index.c
+**    fts5_main.c
+**    fts5_storage.c
+**    fts5_tokenize.c
+**    fts5_unicode2.c
+**    fts5_varint.c
+**    fts5_vocab.c
+*/
+#if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_FTS5)
+
+#if !defined(NDEBUG) && !defined(SQLITE_DEBUG)
+# define NDEBUG 1
+#endif
+#if defined(NDEBUG) && defined(SQLITE_DEBUG)
+# undef NDEBUG
+#endif
+
+#ifdef HAVE_STDINT_H
+/* #include <stdint.h> */
+#endif
+#ifdef HAVE_INTTYPES_H
+/* #include <inttypes.h> */
+#endif
+/*
+** 2014 May 31
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+******************************************************************************
+**
+** Interfaces to extend FTS5. Using the interfaces defined in this file,
+** FTS5 may be extended with:
+**
+**     * custom tokenizers, and
+**     * custom auxiliary functions.
+*/
+
+
+#ifndef _FTS5_H
+#define _FTS5_H
+
+/* #include "sqlite3.h" */
+
+#if 0
+extern "C" {
+#endif
+
+/*************************************************************************
+** CUSTOM AUXILIARY FUNCTIONS
+**
+** Virtual table implementations may overload SQL functions by implementing
+** the sqlite3_module.xFindFunction() method.
+*/
+
+typedef struct Fts5ExtensionApi Fts5ExtensionApi;
+typedef struct Fts5Context Fts5Context;
+typedef struct Fts5PhraseIter Fts5PhraseIter;
+
+typedef void (*fts5_extension_function)(
+  const Fts5ExtensionApi *pApi,   /* API offered by current FTS version */
+  Fts5Context *pFts,              /* First arg to pass to pApi functions */
+  sqlite3_context *pCtx,          /* Context for returning result/error */
+  int nVal,                       /* Number of values in apVal[] array */
+  sqlite3_value **apVal           /* Array of trailing arguments */
+);
+
+struct Fts5PhraseIter {
+  const unsigned char *a;
+  const unsigned char *b;
+};
+
+/*
+** EXTENSION API FUNCTIONS
+**
+** xUserData(pFts):
+**   Return a copy of the pUserData pointer passed to the xCreateFunction()
+**   API when the extension function was registered.
+**
+** xColumnTotalSize(pFts, iCol, pnToken):
+**   If parameter iCol is less than zero, set output variable *pnToken
+**   to the total number of tokens in the FTS5 table. Or, if iCol is
+**   non-negative but less than the number of columns in the table, return
+**   the total number of tokens in column iCol, considering all rows in
+**   the FTS5 table.
+**
+**   If parameter iCol is greater than or equal to the number of columns
+**   in the table, SQLITE_RANGE is returned. Or, if an error occurs (e.g.
+**   an OOM condition or IO error), an appropriate SQLite error code is
+**   returned.
+**
+** xColumnCount(pFts):
+**   Return the number of columns in the table.
+**
+** xColumnSize(pFts, iCol, pnToken):
+**   If parameter iCol is less than zero, set output variable *pnToken
+**   to the total number of tokens in the current row. Or, if iCol is
+**   non-negative but less than the number of columns in the table, set
+**   *pnToken to the number of tokens in column iCol of the current row.
+**
+**   If parameter iCol is greater than or equal to the number of columns
+**   in the table, SQLITE_RANGE is returned. Or, if an error occurs (e.g.
+**   an OOM condition or IO error), an appropriate SQLite error code is
+**   returned.
+**
+**   This function may be quite inefficient if used with an FTS5 table
+**   created with the "columnsize=0" option.
+**
+** xColumnText:
+**   If parameter iCol is less than zero, or greater than or equal to the
+**   number of columns in the table, SQLITE_RANGE is returned.
+**
+**   Otherwise, this function attempts to retrieve the text of column iCol of
+**   the current document. If successful, (*pz) is set to point to a buffer
+**   containing the text in utf-8 encoding, (*pn) is set to the size in bytes
+**   (not characters) of the buffer and SQLITE_OK is returned. Otherwise,
+**   if an error occurs, an SQLite error code is returned and the final values
+**   of (*pz) and (*pn) are undefined.
+**
+** xPhraseCount:
+**   Returns the number of phrases in the current query expression.
+**
+** xPhraseSize:
+**   If parameter iCol is less than zero, or greater than or equal to the
+**   number of phrases in the current query, as returned by xPhraseCount,
+**   0 is returned. Otherwise, this function returns the number of tokens in
+**   phrase iPhrase of the query. Phrases are numbered starting from zero.
+**
+** xInstCount:
+**   Set *pnInst to the total number of occurrences of all phrases within
+**   the query within the current row. Return SQLITE_OK if successful, or
+**   an error code (i.e. SQLITE_NOMEM) if an error occurs.
+**
+**   This API can be quite slow if used with an FTS5 table created with the
+**   "detail=none" or "detail=column" option. If the FTS5 table is created
+**   with either "detail=none" or "detail=column" and "content=" option
+**   (i.e. if it is a contentless table), then this API always returns 0.
+**
+** xInst:
+**   Query for the details of phrase match iIdx within the current row.
+**   Phrase matches are numbered starting from zero, so the iIdx argument
+**   should be greater than or equal to zero and smaller than the value
+**   output by xInstCount(). If iIdx is less than zero or greater than
+**   or equal to the value returned by xInstCount(), SQLITE_RANGE is returned.
+**
+**   Otherwise, output parameter *piPhrase is set to the phrase number, *piCol
+**   to the column in which it occurs and *piOff the token offset of the
+**   first token of the phrase. SQLITE_OK is returned if successful, or an
+**   error code (i.e. SQLITE_NOMEM) if an error occurs.
+**
+**   This API can be quite slow if used with an FTS5 table created with the
+**   "detail=none" or "detail=column" option.
+**
+** xRowid:
+**   Returns the rowid of the current row.
+**
+** xTokenize:
+**   Tokenize text using the tokenizer belonging to the FTS5 table.
+**
+** xQueryPhrase(pFts5, iPhrase, pUserData, xCallback):
+**   This API function is used to query the FTS table for phrase iPhrase
+**   of the current query. Specifically, a query equivalent to:
+**
+**       ... FROM ftstable WHERE ftstable MATCH $p ORDER BY rowid
+**
+**   with $p set to a phrase equivalent to the phrase iPhrase of the
+**   current query is executed. Any column filter that applies to
+**   phrase iPhrase of the current query is included in $p. For each
+**   row visited, the callback function passed as the fourth argument
+**   is invoked. The context and API objects passed to the callback
+**   function may be used to access the properties of each matched row.
+**   Invoking Api.xUserData() returns a copy of the pointer passed as
+**   the third argument to pUserData.
+**
+**   If parameter iPhrase is less than zero, or greater than or equal to
+**   the number of phrases in the query, as returned by xPhraseCount(),
+**   this function returns SQLITE_RANGE.
+**
+**   If the callback function returns any value other than SQLITE_OK, the
+**   query is abandoned and the xQueryPhrase function returns immediately.
+**   If the returned value is SQLITE_DONE, xQueryPhrase returns SQLITE_OK.
+**   Otherwise, the error code is propagated upwards.
+**
+**   If the query runs to completion without incident, SQLITE_OK is returned.
+**   Or, if some error occurs before the query completes or is aborted by
+**   the callback, an SQLite error code is returned.
+**
+**
+** xSetAuxdata(pFts5, pAux, xDelete)
+**
+**   Save the pointer passed as the second argument as the extension function's
+**   "auxiliary data". The pointer may then be retrieved by the current or any
+**   future invocation of the same fts5 extension function made as part of
+**   the same MATCH query using the xGetAuxdata() API.
+**
+**   Each extension function is allocated a single auxiliary data slot for
+**   each FTS query (MATCH expression). If the extension function is invoked
+**   more than once for a single FTS query, then all invocations share a
+**   single auxiliary data context.
+**
+**   If there is already an auxiliary data pointer when this function is
+**   invoked, then it is replaced by the new pointer. If an xDelete callback
+**   was specified along with the original pointer, it is invoked at this
+**   point.
+**
+**   The xDelete callback, if one is specified, is also invoked on the
+**   auxiliary data pointer after the FTS5 query has finished.
+**
+**   If an error (e.g. an OOM condition) occurs within this function,
+**   the auxiliary data is set to NULL and an error code returned. If the
+**   xDelete parameter was not NULL, it is invoked on the auxiliary data
+**   pointer before returning.
+**
+**
+** xGetAuxdata(pFts5, bClear)
+**
+**   Returns the current auxiliary data pointer for the fts5 extension
+**   function. See the xSetAuxdata() method for details.
+**
+**   If the bClear argument is non-zero, then the auxiliary data is cleared
+**   (set to NULL) before this function returns. In this case the xDelete,
+**   if any, is not invoked.
+**
+**
+** xRowCount(pFts5, pnRow)
+**
+**   This function is used to retrieve the total number of rows in the table.
+**   In other words, the same value that would be returned by:
+**
+**        SELECT count(*) FROM ftstable;
+**
+** xPhraseFirst()
+**   This function is used, along with type Fts5PhraseIter and the xPhraseNext
+**   method, to iterate through all instances of a single query phrase within
+**   the current row. This is the same information as is accessible via the
+**   xInstCount/xInst APIs. While the xInstCount/xInst APIs are more convenient
+**   to use, this API may be faster under some circumstances. To iterate
+**   through instances of phrase iPhrase, use the following code:
+**
+**       Fts5PhraseIter iter;
+**       int iCol, iOff;
+**       for(pApi->xPhraseFirst(pFts, iPhrase, &iter, &iCol, &iOff);
+**           iCol>=0;
+**           pApi->xPhraseNext(pFts, &iter, &iCol, &iOff)
+**       ){
+**         // An instance of phrase iPhrase at offset iOff of column iCol
+**       }
+**
+**   The Fts5PhraseIter structure is defined above. Applications should not
+**   modify this structure directly - it should only be used as shown above
+**   with the xPhraseFirst() and xPhraseNext() API methods (and by
+**   xPhraseFirstColumn() and xPhraseNextColumn() as illustrated below).
+**
+**   This API can be quite slow if used with an FTS5 table created with the
+**   "detail=none" or "detail=column" option. If the FTS5 table is created
+**   with either "detail=none" or "detail=column" and "content=" option
+**   (i.e. if it is a contentless table), then this API always iterates
+**   through an empty set (all calls to xPhraseFirst() set iCol to -1).
+**
+**   In all cases, matches are visited in (column ASC, offset ASC) order.
+**   i.e. all those in column 0, sorted by offset, followed by those in
+**   column 1, etc.
+**
+** xPhraseNext()
+**   See xPhraseFirst above.
+**
+** xPhraseFirstColumn()
+**   This function and xPhraseNextColumn() are similar to the xPhraseFirst()
+**   and xPhraseNext() APIs described above. The difference is that instead
+**   of iterating through all instances of a phrase in the current row, these
+**   APIs are used to iterate through the set of columns in the current row
+**   that contain one or more instances of a specified phrase. For example:
+**
+**       Fts5PhraseIter iter;
+**       int iCol;
+**       for(pApi->xPhraseFirstColumn(pFts, iPhrase, &iter, &iCol);
+**           iCol>=0;
+**           pApi->xPhraseNextColumn(pFts, &iter, &iCol)
+**       ){
+**         // Column iCol contains at least one instance of phrase iPhrase
+**       }
+**
+**   This API can be quite slow if used with an FTS5 table created with the
+**   "detail=none" option. If the FTS5 table is created with either
+**   "detail=none" "content=" option (i.e. if it is a contentless table),
+**   then this API always iterates through an empty set (all calls to
+**   xPhraseFirstColumn() set iCol to -1).
+**
+**   The information accessed using this API and its companion
+**   xPhraseFirstColumn() may also be obtained using xPhraseFirst/xPhraseNext
+**   (or xInst/xInstCount). The chief advantage of this API is that it is
+**   significantly more efficient than those alternatives when used with
+**   "detail=column" tables.
+**
+** xPhraseNextColumn()
+**   See xPhraseFirstColumn above.
+**
+** xQueryToken(pFts5, iPhrase, iToken, ppToken, pnToken)
+**   This is used to access token iToken of phrase iPhrase of the current
+**   query. Before returning, output parameter *ppToken is set to point
+**   to a buffer containing the requested token, and *pnToken to the
+**   size of this buffer in bytes.
+**
+**   If iPhrase or iToken are less than zero, or if iPhrase is greater than
+**   or equal to the number of phrases in the query as reported by
+**   xPhraseCount(), or if iToken is equal to or greater than the number of
+**   tokens in the phrase, SQLITE_RANGE is returned and *ppToken and *pnToken
+     are both zeroed.
+**
+**   The output text is not a copy of the query text that specified the
+**   token. It is the output of the tokenizer module. For tokendata=1
+**   tables, this includes any embedded 0x00 and trailing data.
+**
+** xInstToken(pFts5, iIdx, iToken, ppToken, pnToken)
+**   This is used to access token iToken of phrase hit iIdx within the
+**   current row. If iIdx is less than zero or greater than or equal to the
+**   value returned by xInstCount(), SQLITE_RANGE is returned.  Otherwise,
+**   output variable (*ppToken) is set to point to a buffer containing the
+**   matching document token, and (*pnToken) to the size of that buffer in
+**   bytes.
+**
+**   The output text is not a copy of the document text that was tokenized.
+**   It is the output of the tokenizer module. For tokendata=1 tables, this
+**   includes any embedded 0x00 and trailing data.
+**
+**   This API may be slow in some cases if the token identified by parameters
+**   iIdx and iToken matched a prefix token in the query. In most cases, the
+**   first call to this API for each prefix token in the query is forced
+**   to scan the portion of the full-text index that matches the prefix
+**   token to collect the extra data required by this API. If the prefix
+**   token matches a large number of token instances in the document set,
+**   this may be a performance problem.
+**
+**   If the user knows in advance that a query may use this API for a
+**   prefix token, FTS5 may be configured to collect all required data as part
+**   of the initial querying of the full-text index, avoiding the second scan
+**   entirely. This also causes prefix queries that do not use this API to
+**   run more slowly and use more memory. FTS5 may be configured in this way
+**   either on a per-table basis using the [FTS5 insttoken | 'insttoken']
+**   option, or on a per-query basis using the
+**   [fts5_insttoken | fts5_insttoken()] user function.
+**
+**   This API can be quite slow if used with an FTS5 table created with the
+**   "detail=none" or "detail=column" option.
+**
+** xColumnLocale(pFts5, iIdx, pzLocale, pnLocale)
+**   If parameter iCol is less than zero, or greater than or equal to the
+**   number of columns in the table, SQLITE_RANGE is returned.
+**
+**   Otherwise, this function attempts to retrieve the locale associated
+**   with column iCol of the current row. Usually, there is no associated
+**   locale, and output parameters (*pzLocale) and (*pnLocale) are set
+**   to NULL and 0, respectively. However, if the fts5_locale() function
+**   was used to associate a locale with the value when it was inserted
+**   into the fts5 table, then (*pzLocale) is set to point to a nul-terminated
+**   buffer containing the name of the locale in utf-8 encoding. (*pnLocale)
+**   is set to the size in bytes of the buffer, not including the
+**   nul-terminator.
+**
+**   If successful, SQLITE_OK is returned. Or, if an error occurs, an
+**   SQLite error code is returned. The final value of the output parameters
+**   is undefined in this case.
+**
+** xTokenize_v2:
+**   Tokenize text using the tokenizer belonging to the FTS5 table. This
+**   API is the same as the xTokenize() API, except that it allows a tokenizer
+**   locale to be specified.
+*/
+struct Fts5ExtensionApi {
+  int iVersion;                   /* Currently always set to 4 */
+
+  void *(*xUserData)(Fts5Context*);
+
+  int (*xColumnCount)(Fts5Context*);
+  int (*xRowCount)(Fts5Context*, sqlite3_int64 *pnRow);
+  int (*xColumnTotalSize)(Fts5Context*, int iCol, sqlite3_int64 *pnToken);
+
+  int (*xTokenize)(Fts5Context*,
+    const char *pText, int nText, /* Text to tokenize */
+    void *pCtx,                   /* Context passed to xToken() */
+    int (*xToken)(void*, int, const char*, int, int, int)       /* Callback */
+  );
+
+  int (*xPhraseCount)(Fts5Context*);
+  int (*xPhraseSize)(Fts5Context*, int iPhrase);
+
+  int (*xInstCount)(Fts5Context*, int *pnInst);
+  int (*xInst)(Fts5Context*, int iIdx, int *piPhrase, int *piCol, int *piOff);
+
+  sqlite3_int64 (*xRowid)(Fts5Context*);
+  int (*xColumnText)(Fts5Context*, int iCol, const char **pz, int *pn);
+  int (*xColumnSize)(Fts5Context*, int iCol, int *pnToken);
+
+  int (*xQueryPhrase)(Fts5Context*, int iPhrase, void *pUserData,
+    int(*)(const Fts5ExtensionApi*,Fts5Context*,void*)
+  );
+  int (*xSetAuxdata)(Fts5Context*, void *pAux, void(*xDelete)(void*));
+  void *(*xGetAuxdata)(Fts5Context*, int bClear);
+
+  int (*xPhraseFirst)(Fts5Context*, int iPhrase, Fts5PhraseIter*, int*, int*);
+  void (*xPhraseNext)(Fts5Context*, Fts5PhraseIter*, int *piCol, int *piOff);
+
+  int (*xPhraseFirstColumn)(Fts5Context*, int iPhrase, Fts5PhraseIter*, int*);
+  void (*xPhraseNextColumn)(Fts5Context*, Fts5PhraseIter*, int *piCol);
+
+  /* Below this point are iVersion>=3 only */
+  int (*xQueryToken)(Fts5Context*,
+      int iPhrase, int iToken,
+      const char **ppToken, int *pnToken
+  );
+  int (*xInstToken)(Fts5Context*, int iIdx, int iToken, const char**, int*);
+
+  /* Below this point are iVersion>=4 only */
+  int (*xColumnLocale)(Fts5Context*, int iCol, const char **pz, int *pn);
+  int (*xTokenize_v2)(Fts5Context*,
+    const char *pText, int nText,      /* Text to tokenize */
+    const char *pLocale, int nLocale,  /* Locale to pass to tokenizer */
+    void *pCtx,                        /* Context passed to xToken() */
+    int (*xToken)(void*, int, const char*, int, int, int)       /* Callback */
+  );
+};
+
+/*
+** CUSTOM AUXILIARY FUNCTIONS
+*************************************************************************/
+
+/*************************************************************************
+** CUSTOM TOKENIZERS
+**
+** Applications may also register custom tokenizer types. A tokenizer
+** is registered by providing fts5 with a populated instance of the
+** following structure. All structure methods must be defined, setting
+** any member of the fts5_tokenizer struct to NULL leads to undefined
+** behaviour. The structure methods are expected to function as follows:
+**
+** xCreate:
+**   This function is used to allocate and initialize a tokenizer instance.
+**   A tokenizer instance is required to actually tokenize text.
+**
+**   The first argument passed to this function is a copy of the (void*)
+**   pointer provided by the application when the fts5_tokenizer_v2 object
+**   was registered with FTS5 (the third argument to xCreateTokenizer()).
+**   The second and third arguments are an array of nul-terminated strings
+**   containing the tokenizer arguments, if any, specified following the
+**   tokenizer name as part of the CREATE VIRTUAL TABLE statement used
+**   to create the FTS5 table.
+**
+**   The final argument is an output variable. If successful, (*ppOut)
+**   should be set to point to the new tokenizer handle and SQLITE_OK
+**   returned. If an error occurs, some value other than SQLITE_OK should
+**   be returned. In this case, fts5 assumes that the final value of *ppOut
+**   is undefined.
+**
+** xDelete:
+**   This function is invoked to delete a tokenizer handle previously
+**   allocated using xCreate(). Fts5 guarantees that this function will
+**   be invoked exactly once for each successful call to xCreate().
+**
+** xTokenize:
+**   This function is expected to tokenize the nText byte string indicated
+**   by argument pText. pText may or may not be nul-terminated. The first
+**   argument passed to this function is a pointer to an Fts5Tokenizer object
+**   returned by an earlier call to xCreate().
+**
+**   The third argument indicates the reason that FTS5 is requesting
+**   tokenization of the supplied text. This is always one of the following
+**   four values:
+**
+**   <ul><li> <b>FTS5_TOKENIZE_DOCUMENT</b> - A document is being inserted into
+**            or removed from the FTS table. The tokenizer is being invoked to
+**            determine the set of tokens to add to (or delete from) the
+**            FTS index.
+**
+**       <li> <b>FTS5_TOKENIZE_QUERY</b> - A MATCH query is being executed
+**            against the FTS index. The tokenizer is being called to tokenize
+**            a bareword or quoted string specified as part of the query.
+**
+**       <li> <b>(FTS5_TOKENIZE_QUERY | FTS5_TOKENIZE_PREFIX)</b> - Same as
+**            FTS5_TOKENIZE_QUERY, except that the bareword or quoted string is
+**            followed by a "*" character, indicating that the last token
+**            returned by the tokenizer will be treated as a token prefix.
+**
+**       <li> <b>FTS5_TOKENIZE_AUX</b> - The tokenizer is being invoked to
+**            satisfy an fts5_api.xTokenize() request made by an auxiliary
+**            function. Or an fts5_api.xColumnSize() request made by the same
+**            on a columnsize=0 database.
+**   </ul>
+**
+**   The sixth and seventh arguments passed to xTokenize() - pLocale and
+**   nLocale - are a pointer to a buffer containing the locale to use for
+**   tokenization (e.g. "en_US") and its size in bytes, respectively. The
+**   pLocale buffer is not nul-terminated. pLocale may be passed NULL (in
+**   which case nLocale is always 0) to indicate that the tokenizer should
+**   use its default locale.
+**
+**   For each token in the input string, the supplied callback xToken() must
+**   be invoked. The first argument to it should be a copy of the pointer
+**   passed as the second argument to xTokenize(). The third and fourth
+**   arguments are a pointer to a buffer containing the token text, and the
+**   size of the token in bytes. The 4th and 5th arguments are the byte offsets
+**   of the first byte of and first byte immediately following the text from
+**   which the token is derived within the input.
+**
+**   The second argument passed to the xToken() callback ("tflags") should
+**   normally be set to 0. The exception is if the tokenizer supports
+**   synonyms. In this case see the discussion below for details.
+**
+**   FTS5 assumes the xToken() callback is invoked for each token in the
+**   order that they occur within the input text.
+**
+**   If an xToken() callback returns any value other than SQLITE_OK, then
+**   the tokenization should be abandoned and the xTokenize() method should
+**   immediately return a copy of the xToken() return value. Or, if the
+**   input buffer is exhausted, xTokenize() should return SQLITE_OK. Finally,
+**   if an error occurs with the xTokenize() implementation itself, it
+**   may abandon the tokenization and return any error code other than
+**   SQLITE_OK or SQLITE_DONE.
+**
+**   If the tokenizer is registered using an fts5_tokenizer_v2 object,
+**   then the xTokenize() method has two additional arguments - pLocale
+**   and nLocale. These specify the locale that the tokenizer should use
+**   for the current request. If pLocale and nLocale are both 0, then the
+**   tokenizer should use its default locale. Otherwise, pLocale points to
+**   an nLocale byte buffer containing the name of the locale to use as utf-8
+**   text. pLocale is not nul-terminated.
+**
+** FTS5_TOKENIZER
+**
+** There is also an fts5_tokenizer object. This is an older, deprecated,
+** version of fts5_tokenizer_v2. It is similar except that:
+**
+**  <ul>
+**    <li> There is no "iVersion" field, and
+**    <li> The xTokenize() method does not take a locale argument.
+**  </ul>
+**
+** Legacy fts5_tokenizer tokenizers must be registered using the
+** legacy xCreateTokenizer() function, instead of xCreateTokenizer_v2().
+**
+** Tokenizer implementations registered using either API may be retrieved
+** using both xFindTokenizer() and xFindTokenizer_v2().
+**
+** SYNONYM SUPPORT
+**
+**   Custom tokenizers may also support synonyms. Consider a case in which a
+**   user wishes to query for a phrase such as "first place". Using the
+**   built-in tokenizers, the FTS5 query 'first + place' will match instances
+**   of "first place" within the document set, but not alternative forms
+**   such as "1st place". In some applications, it would be better to match
+**   all instances of "first place" or "1st place" regardless of which form
+**   the user specified in the MATCH query text.
+**
+**   There are several ways to approach this in FTS5:
+**
+**   <ol><li> By mapping all synonyms to a single token. In this case, using
+**            the above example, this means that the tokenizer returns the
+**            same token for inputs "first" and "1st". Say that token is in
+**            fact "first", so that when the user inserts the document "I won
+**            1st place" entries are added to the index for tokens "i", "won",
+**            "first" and "place". If the user then queries for '1st + place',
+**            the tokenizer substitutes "first" for "1st" and the query works
+**            as expected.
+**
+**       <li> By querying the index for all synonyms of each query term
+**            separately. In this case, when tokenizing query text, the
+**            tokenizer may provide multiple synonyms for a single term
+**            within the document. FTS5 then queries the index for each
+**            synonym individually. For example, faced with the query:
+**
+**   <codeblock>
+**     ... MATCH 'first place'</codeblock>
+**
+**            the tokenizer offers both "1st" and "first" as synonyms for the
+**            first token in the MATCH query and FTS5 effectively runs a query
+**            similar to:
+**
+**   <codeblock>
+**     ... MATCH '(first OR 1st) place'</codeblock>
+**
+**            except that, for the purposes of auxiliary functions, the query
+**            still appears to contain just two phrases - "(first OR 1st)"
+**            being treated as a single phrase.
+**
+**       <li> By adding multiple synonyms for a single term to the FTS index.
+**            Using this method, when tokenizing document text, the tokenizer
+**            provides multiple synonyms for each token. So that when a
+**            document such as "I won first place" is tokenized, entries are
+**            added to the FTS index for "i", "won", "first", "1st" and
+**            "place".
+**
+**            This way, even if the tokenizer does not provide synonyms
+**            when tokenizing query text (it should not - to do so would be
+**            inefficient), it doesn't matter if the user queries for
+**            'first + place' or '1st + place', as there are entries in the
+**            FTS index corresponding to both forms of the first token.
+**   </ol>
+**
+**   Whether it is parsing document or query text, any call to xToken that
+**   specifies a <i>tflags</i> argument with the FTS5_TOKEN_COLOCATED bit
+**   is considered to supply a synonym for the previous token. For example,
+**   when parsing the document "I won first place", a tokenizer that supports
+**   synonyms would call xToken() 5 times, as follows:
+**
+**   <codeblock>
+**       xToken(pCtx, 0, "i",                      1,  0,  1);
+**       xToken(pCtx, 0, "won",                    3,  2,  5);
+**       xToken(pCtx, 0, "first",                  5,  6, 11);
+**       xToken(pCtx, FTS5_TOKEN_COLOCATED, "1st", 3,  6, 11);
+**       xToken(pCtx, 0, "place",                  5, 12, 17);
+**</codeblock>
+**
+**   It is an error to specify the FTS5_TOKEN_COLOCATED flag the first time
+**   xToken() is called. Multiple synonyms may be specified for a single token
+**   by making multiple calls to xToken(FTS5_TOKEN_COLOCATED) in sequence.
+**   There is no limit to the number of synonyms that may be provided for a
+**   single token.
+**
+**   In many cases, method (1) above is the best approach. It does not add
+**   extra data to the FTS index or require FTS5 to query for multiple terms,
+**   so it is efficient in terms of disk space and query speed. However, it
+**   does not support prefix queries very well. If, as suggested above, the
+**   token "first" is substituted for "1st" by the tokenizer, then the query:
+**
+**   <codeblock>
+**     ... MATCH '1s*'</codeblock>
+**
+**   will not match documents that contain the token "1st" (as the tokenizer
+**   will probably not map "1s" to any prefix of "first").
+**
+**   For full prefix support, method (3) may be preferred. In this case,
+**   because the index contains entries for both "first" and "1st", prefix
+**   queries such as 'fi*' or '1s*' will match correctly. However, because
+**   extra entries are added to the FTS index, this method uses more space
+**   within the database.
+**
+**   Method (2) offers a midpoint between (1) and (3). Using this method,
+**   a query such as '1s*' will match documents that contain the literal
+**   token "1st", but not "first" (assuming the tokenizer is not able to
+**   provide synonyms for prefixes). However, a non-prefix query like '1st'
+**   will match against "1st" and "first". This method does not require
+**   extra disk space, as no extra entries are added to the FTS index.
+**   On the other hand, it may require more CPU cycles to run MATCH queries,
+**   as separate queries of the FTS index are required for each synonym.
+**
+**   When using methods (2) or (3), it is important that the tokenizer only
+**   provide synonyms when tokenizing document text (method (3)) or query
+**   text (method (2)), not both. Doing so will not cause any errors, but is
+**   inefficient.
+*/
+typedef struct Fts5Tokenizer Fts5Tokenizer;
+typedef struct fts5_tokenizer_v2 fts5_tokenizer_v2;
+struct fts5_tokenizer_v2 {
+  int iVersion;             /* Currently always 2 */
+
+  int (*xCreate)(void*, const char **azArg, int nArg, Fts5Tokenizer **ppOut);
+  void (*xDelete)(Fts5Tokenizer*);
+  int (*xTokenize)(Fts5Tokenizer*,
+      void *pCtx,
+      int flags,            /* Mask of FTS5_TOKENIZE_* flags */
+      const char *pText, int nText,
+      const char *pLocale, int nLocale,
+      int (*xToken)(
+        void *pCtx,         /* Copy of 2nd argument to xTokenize() */
+        int tflags,         /* Mask of FTS5_TOKEN_* flags */
+        const char *pToken, /* Pointer to buffer containing token */
+        int nToken,         /* Size of token in bytes */
+        int iStart,         /* Byte offset of token within input text */
+        int iEnd            /* Byte offset of end of token within input text */
+      )
+  );
+};
+
+/*
+** New code should use the fts5_tokenizer_v2 type to define tokenizer
+** implementations. The following type is included for legacy applications
+** that still use it.
+*/
+typedef struct fts5_tokenizer fts5_tokenizer;
+struct fts5_tokenizer {
+  int (*xCreate)(void*, const char **azArg, int nArg, Fts5Tokenizer **ppOut);
+  void (*xDelete)(Fts5Tokenizer*);
+  int (*xTokenize)(Fts5Tokenizer*,
+      void *pCtx,
+      int flags,            /* Mask of FTS5_TOKENIZE_* flags */
+      const char *pText, int nText,
+      int (*xToken)(
+        void *pCtx,         /* Copy of 2nd argument to xTokenize() */
+        int tflags,         /* Mask of FTS5_TOKEN_* flags */
+        const char *pToken, /* Pointer to buffer containing token */
+        int nToken,         /* Size of token in bytes */
+        int iStart,         /* Byte offset of token within input text */
+        int iEnd            /* Byte offset of end of token within input text */
+      )
+  );
+};
+
+
+/* Flags that may be passed as the third argument to xTokenize() */
+#define FTS5_TOKENIZE_QUERY     0x0001
+#define FTS5_TOKENIZE_PREFIX    0x0002
+#define FTS5_TOKENIZE_DOCUMENT  0x0004
+#define FTS5_TOKENIZE_AUX       0x0008
+
+/* Flags that may be passed by the tokenizer implementation back to FTS5
+** as the third argument to the supplied xToken callback. */
+#define FTS5_TOKEN_COLOCATED    0x0001      /* Same position as prev. token */
+
+/*
+** END OF CUSTOM TOKENIZERS
+*************************************************************************/
+
+/*************************************************************************
+** FTS5 EXTENSION REGISTRATION API
+*/
+typedef struct fts5_api fts5_api;
+struct fts5_api {
+  int iVersion;                   /* Currently always set to 3 */
+
+  /* Create a new tokenizer */
+  int (*xCreateTokenizer)(
+    fts5_api *pApi,
+    const char *zName,
+    void *pUserData,
+    fts5_tokenizer *pTokenizer,
+    void (*xDestroy)(void*)
+  );
+
+  /* Find an existing tokenizer */
+  int (*xFindTokenizer)(
+    fts5_api *pApi,
+    const char *zName,
+    void **ppUserData,
+    fts5_tokenizer *pTokenizer
+  );
+
+  /* Create a new auxiliary function */
+  int (*xCreateFunction)(
+    fts5_api *pApi,
+    const char *zName,
+    void *pUserData,
+    fts5_extension_function xFunction,
+    void (*xDestroy)(void*)
+  );
+
+  /* APIs below this point are only available if iVersion>=3 */
+
+  /* Create a new tokenizer */
+  int (*xCreateTokenizer_v2)(
+    fts5_api *pApi,
+    const char *zName,
+    void *pUserData,
+    fts5_tokenizer_v2 *pTokenizer,
+    void (*xDestroy)(void*)
+  );
+
+  /* Find an existing tokenizer */
+  int (*xFindTokenizer_v2)(
+    fts5_api *pApi,
+    const char *zName,
+    void **ppUserData,
+    fts5_tokenizer_v2 **ppTokenizer
+  );
+};
+
+/*
+** END OF REGISTRATION API
+*************************************************************************/
+
+#if 0
+}  /* end of the 'extern "C"' block */
+#endif
+
+#endif /* _FTS5_H */
+
+/*
+** 2014 May 31
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+******************************************************************************
+**
+*/
+#ifndef _FTS5INT_H
+#define _FTS5INT_H
+
+/* #include "fts5.h" */
+/* #include "sqlite3ext.h" */
+SQLITE_EXTENSION_INIT1
+
+/* #include <string.h> */
+/* #include <assert.h> */
+/* #include <stddef.h> */
+
+#ifndef SQLITE_AMALGAMATION
+
+typedef unsigned char  

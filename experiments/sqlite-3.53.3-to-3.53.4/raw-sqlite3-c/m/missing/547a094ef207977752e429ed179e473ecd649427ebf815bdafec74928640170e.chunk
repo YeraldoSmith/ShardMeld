@@ -1,0 +1,864 @@
+m*sizeof(u32));
+    }
+  }
+
+  *paOut = aOut;
+  return xRet;
+}
+
+static void fts3MIBufferSetGlobal(MatchinfoBuffer *p){
+  p->bGlobal = 1;
+  memcpy(&p->aMI[2+p->nElem], &p->aMI[1], p->nElem*sizeof(u32));
+}
+
+/*
+** Free a MatchinfoBuffer object allocated using fts3MIBufferNew()
+*/
+SQLITE_PRIVATE void sqlite3Fts3MIBufferFree(MatchinfoBuffer *p){
+  if( p ){
+    assert( p->aRef[0]==1 );
+    p->aRef[0] = 0;
+    if( p->aRef[0]==0 && p->aRef[1]==0 && p->aRef[2]==0 ){
+      sqlite3_free(p);
+    }
+  }
+}
+
+/*
+** End of MatchinfoBuffer code.
+*************************************************************************/
+
+
+/*
+** This function is used to help iterate through a position-list. A position
+** list is a list of unique integers, sorted from smallest to largest. Each
+** element of the list is represented by an FTS3 varint that takes the value
+** of the difference between the current element and the previous one plus
+** two. For example, to store the position-list:
+**
+**     4 9 113
+**
+** the three varints:
+**
+**     6 7 106
+**
+** are encoded.
+**
+** When this function is called, *pp points to the start of an element of
+** the list. *piPos contains the value of the previous entry in the list.
+** After it returns, *piPos contains the value of the next element of the
+** list and *pp is advanced to the following varint.
+*/
+static void fts3GetDeltaPosition(char **pp, i64 *piPos){
+  int iVal;
+  *pp += fts3GetVarint32(*pp, &iVal);
+  *piPos += (iVal-2);
+}
+
+/*
+** Helper function for sqlite3Fts3ExprIterate() (see below).
+*/
+static int fts3ExprIterate2(
+  Fts3Expr *pExpr,                /* Expression to iterate phrases of */
+  int *piPhrase,                  /* Pointer to phrase counter */
+  int (*x)(Fts3Expr*,int,void*),  /* Callback function to invoke for phrases */
+  void *pCtx                      /* Second argument to pass to callback */
+){
+  int rc;                         /* Return code */
+  int eType = pExpr->eType;     /* Type of expression node pExpr */
+
+  if( eType!=FTSQUERY_PHRASE ){
+    assert( pExpr->pLeft && pExpr->pRight );
+    rc = fts3ExprIterate2(pExpr->pLeft, piPhrase, x, pCtx);
+    if( rc==SQLITE_OK && eType!=FTSQUERY_NOT ){
+      rc = fts3ExprIterate2(pExpr->pRight, piPhrase, x, pCtx);
+    }
+  }else{
+    rc = x(pExpr, *piPhrase, pCtx);
+    (*piPhrase)++;
+  }
+  return rc;
+}
+
+/*
+** Iterate through all phrase nodes in an FTS3 query, except those that
+** are part of a sub-tree that is the right-hand-side of a NOT operator.
+** For each phrase node found, the supplied callback function is invoked.
+**
+** If the callback function returns anything other than SQLITE_OK,
+** the iteration is abandoned and the error code returned immediately.
+** Otherwise, SQLITE_OK is returned after a callback has been made for
+** all eligible phrase nodes.
+*/
+SQLITE_PRIVATE int sqlite3Fts3ExprIterate(
+  Fts3Expr *pExpr,                /* Expression to iterate phrases of */
+  int (*x)(Fts3Expr*,int,void*),  /* Callback function to invoke for phrases */
+  void *pCtx                      /* Second argument to pass to callback */
+){
+  int iPhrase = 0;                /* Variable used as the phrase counter */
+  return fts3ExprIterate2(pExpr, &iPhrase, x, pCtx);
+}
+
+/*
+** This is an sqlite3Fts3ExprIterate() callback used while loading the
+** doclists for each phrase into Fts3Expr.aDoclist[]/nDoclist. See also
+** fts3ExprLoadDoclists().
+*/
+static int fts3ExprLoadDoclistsCb(Fts3Expr *pExpr, int iPhrase, void *ctx){
+  int rc = SQLITE_OK;
+  Fts3Phrase *pPhrase = pExpr->pPhrase;
+  LoadDoclistCtx *p = (LoadDoclistCtx *)ctx;
+
+  UNUSED_PARAMETER(iPhrase);
+
+  p->nPhrase++;
+  p->nToken += pPhrase->nToken;
+
+  return rc;
+}
+
+/*
+** Load the doclists for each phrase in the query associated with FTS3 cursor
+** pCsr.
+**
+** If pnPhrase is not NULL, then *pnPhrase is set to the number of matchable
+** phrases in the expression (all phrases except those directly or
+** indirectly descended from the right-hand-side of a NOT operator). If
+** pnToken is not NULL, then it is set to the number of tokens in all
+** matchable phrases of the expression.
+*/
+static int fts3ExprLoadDoclists(
+  Fts3Cursor *pCsr,               /* Fts3 cursor for current query */
+  int *pnPhrase,                  /* OUT: Number of phrases in query */
+  int *pnToken                    /* OUT: Number of tokens in query */
+){
+  int rc;                         /* Return Code */
+  LoadDoclistCtx sCtx = {0,0,0};  /* Context for sqlite3Fts3ExprIterate() */
+  sCtx.pCsr = pCsr;
+  rc = sqlite3Fts3ExprIterate(pCsr->pExpr,fts3ExprLoadDoclistsCb,(void*)&sCtx);
+  if( pnPhrase ) *pnPhrase = sCtx.nPhrase;
+  if( pnToken ) *pnToken = sCtx.nToken;
+  return rc;
+}
+
+static int fts3ExprPhraseCountCb(Fts3Expr *pExpr, int iPhrase, void *ctx){
+  (*(int *)ctx)++;
+  pExpr->iPhrase = iPhrase;
+  return SQLITE_OK;
+}
+static int fts3ExprPhraseCount(Fts3Expr *pExpr){
+  int nPhrase = 0;
+  (void)sqlite3Fts3ExprIterate(pExpr, fts3ExprPhraseCountCb, (void *)&nPhrase);
+  return nPhrase;
+}
+
+/*
+** Advance the position list iterator specified by the first two
+** arguments so that it points to the first element with a value greater
+** than or equal to parameter iNext.
+*/
+static void fts3SnippetAdvance(char **ppIter, i64 *piIter, int iNext){
+  char *pIter = *ppIter;
+  if( pIter ){
+    i64 iIter = *piIter;
+
+    while( iIter<iNext ){
+      if( 0==(*pIter & 0xFE) ){
+        iIter = -1;
+        pIter = 0;
+        break;
+      }
+      fts3GetDeltaPosition(&pIter, &iIter);
+    }
+
+    *piIter = iIter;
+    *ppIter = pIter;
+  }
+}
+
+/*
+** Advance the snippet iterator to the next candidate snippet.
+*/
+static int fts3SnippetNextCandidate(SnippetIter *pIter){
+  int i;                          /* Loop counter */
+
+  if( pIter->iCurrent<0 ){
+    /* The SnippetIter object has just been initialized. The first snippet
+    ** candidate always starts at offset 0 (even if this candidate has a
+    ** score of 0.0).
+    */
+    pIter->iCurrent = 0;
+
+    /* Advance the 'head' iterator of each phrase to the first offset that
+    ** is greater than or equal to (iNext+nSnippet).
+    */
+    for(i=0; i<pIter->nPhrase; i++){
+      SnippetPhrase *pPhrase = &pIter->aPhrase[i];
+      fts3SnippetAdvance(&pPhrase->pHead, &pPhrase->iHead, pIter->nSnippet);
+    }
+  }else{
+    int iStart;
+    int iEnd = 0x7FFFFFFF;
+
+    for(i=0; i<pIter->nPhrase; i++){
+      SnippetPhrase *pPhrase = &pIter->aPhrase[i];
+      if( pPhrase->pHead && pPhrase->iHead<iEnd ){
+        iEnd = pPhrase->iHead;
+      }
+    }
+    if( iEnd==0x7FFFFFFF ){
+      return 1;
+    }
+
+    assert( pIter->nSnippet>=0 );
+    pIter->iCurrent = iStart = iEnd - pIter->nSnippet + 1;
+    for(i=0; i<pIter->nPhrase; i++){
+      SnippetPhrase *pPhrase = &pIter->aPhrase[i];
+      fts3SnippetAdvance(&pPhrase->pHead, &pPhrase->iHead, iEnd+1);
+      fts3SnippetAdvance(&pPhrase->pTail, &pPhrase->iTail, iStart);
+    }
+  }
+
+  return 0;
+}
+
+/*
+** Retrieve information about the current candidate snippet of snippet
+** iterator pIter.
+*/
+static void fts3SnippetDetails(
+  SnippetIter *pIter,             /* Snippet iterator */
+  u64 mCovered,                   /* Bitmask of phrases already covered */
+  int *piToken,                   /* OUT: First token of proposed snippet */
+  int *piScore,                   /* OUT: "Score" for this snippet */
+  u64 *pmCover,                   /* OUT: Bitmask of phrases covered */
+  u64 *pmHighlight                /* OUT: Bitmask of terms to highlight */
+){
+  int iStart = pIter->iCurrent;   /* First token of snippet */
+  int iScore = 0;                 /* Score of this snippet */
+  int i;                          /* Loop counter */
+  u64 mCover = 0;                 /* Mask of phrases covered by this snippet */
+  u64 mHighlight = 0;             /* Mask of tokens to highlight in snippet */
+
+  for(i=0; i<pIter->nPhrase; i++){
+    SnippetPhrase *pPhrase = &pIter->aPhrase[i];
+    if( pPhrase->pTail ){
+      char *pCsr = pPhrase->pTail;
+      i64 iCsr = pPhrase->iTail;
+
+      while( iCsr<(iStart+pIter->nSnippet) && iCsr>=iStart ){
+        int j;
+        u64 mPhrase = (u64)1 << (i%64);
+        u64 mPos = (u64)1 << (iCsr - iStart);
+        assert( iCsr>=iStart && (iCsr - iStart)<=64 );
+        assert( i>=0 );
+        if( (mCover|mCovered)&mPhrase ){
+          iScore++;
+        }else{
+          iScore += 1000;
+        }
+        mCover |= mPhrase;
+
+        for(j=0; j<pPhrase->nToken && j<pIter->nSnippet; j++){
+          mHighlight |= (mPos>>j);
+        }
+
+        if( 0==(*pCsr & 0x0FE) ) break;
+        fts3GetDeltaPosition(&pCsr, &iCsr);
+      }
+    }
+  }
+
+  /* Set the output variables before returning. */
+  *piToken = iStart;
+  *piScore = iScore;
+  *pmCover = mCover;
+  *pmHighlight = mHighlight;
+}
+
+/*
+** This function is an sqlite3Fts3ExprIterate() callback used by
+** fts3BestSnippet().  Each invocation populates an element of the
+** SnippetIter.aPhrase[] array.
+*/
+static int fts3SnippetFindPositions(Fts3Expr *pExpr, int iPhrase, void *ctx){
+  SnippetIter *p = (SnippetIter *)ctx;
+  SnippetPhrase *pPhrase = &p->aPhrase[iPhrase];
+  char *pCsr;
+  int rc;
+
+  pPhrase->nToken = pExpr->pPhrase->nToken;
+  rc = sqlite3Fts3EvalPhrasePoslist(p->pCsr, pExpr, p->iCol, &pCsr);
+  assert( rc==SQLITE_OK || pCsr==0 );
+  if( pCsr ){
+    i64 iFirst = 0;
+    pPhrase->pList = pCsr;
+    fts3GetDeltaPosition(&pCsr, &iFirst);
+    if( iFirst<0 ){
+      rc = FTS_CORRUPT_VTAB;
+    }else{
+      pPhrase->pHead = pCsr;
+      pPhrase->pTail = pCsr;
+      pPhrase->iHead = iFirst;
+      pPhrase->iTail = iFirst;
+    }
+  }else{
+    assert( rc!=SQLITE_OK || (
+       pPhrase->pList==0 && pPhrase->pHead==0 && pPhrase->pTail==0
+    ));
+  }
+
+  return rc;
+}
+
+/*
+** Select the fragment of text consisting of nFragment contiguous tokens
+** from column iCol that represent the "best" snippet. The best snippet
+** is the snippet with the highest score, where scores are calculated
+** by adding:
+**
+**   (a) +1 point for each occurrence of a matchable phrase in the snippet.
+**
+**   (b) +1000 points for the first occurrence of each matchable phrase in
+**       the snippet for which the corresponding mCovered bit is not set.
+**
+** The selected snippet parameters are stored in structure *pFragment before
+** returning. The score of the selected snippet is stored in *piScore
+** before returning.
+*/
+static int fts3BestSnippet(
+  int nSnippet,                   /* Desired snippet length */
+  Fts3Cursor *pCsr,               /* Cursor to create snippet for */
+  int iCol,                       /* Index of column to create snippet from */
+  u64 mCovered,                   /* Mask of phrases already covered */
+  u64 *pmSeen,                    /* IN/OUT: Mask of phrases seen */
+  SnippetFragment *pFragment,     /* OUT: Best snippet found */
+  int *piScore                    /* OUT: Score of snippet pFragment */
+){
+  int rc;                         /* Return Code */
+  int nList;                      /* Number of phrases in expression */
+  SnippetIter sIter;              /* Iterates through snippet candidates */
+  sqlite3_int64 nByte;            /* Number of bytes of space to allocate */
+  int iBestScore = -1;            /* Best snippet score found so far */
+  int i;                          /* Loop counter */
+
+  memset(&sIter, 0, sizeof(sIter));
+
+  /* Iterate through the phrases in the expression to count them. The same
+  ** callback makes sure the doclists are loaded for each phrase.
+  */
+  rc = fts3ExprLoadDoclists(pCsr, &nList, 0);
+  if( rc!=SQLITE_OK ){
+    return rc;
+  }
+
+  /* Now that it is known how many phrases there are, allocate and zero
+  ** the required space using malloc().
+  */
+  nByte = sizeof(SnippetPhrase) * nList;
+  sIter.aPhrase = (SnippetPhrase *)sqlite3Fts3MallocZero(nByte);
+  if( !sIter.aPhrase ){
+    return SQLITE_NOMEM;
+  }
+
+  /* Initialize the contents of the SnippetIter object. Then iterate through
+  ** the set of phrases in the expression to populate the aPhrase[] array.
+  */
+  sIter.pCsr = pCsr;
+  sIter.iCol = iCol;
+  sIter.nSnippet = nSnippet;
+  sIter.nPhrase = nList;
+  sIter.iCurrent = -1;
+  rc = sqlite3Fts3ExprIterate(
+      pCsr->pExpr, fts3SnippetFindPositions, (void*)&sIter
+  );
+  if( rc==SQLITE_OK ){
+
+    /* Set the *pmSeen output variable. */
+    for(i=0; i<nList; i++){
+      if( sIter.aPhrase[i].pHead ){
+        *pmSeen |= (u64)1 << (i%64);
+      }
+    }
+
+    /* Loop through all candidate snippets. Store the best snippet in
+     ** *pFragment. Store its associated 'score' in iBestScore.
+     */
+    pFragment->iCol = iCol;
+    while( !fts3SnippetNextCandidate(&sIter) ){
+      int iPos;
+      int iScore;
+      u64 mCover;
+      u64 mHighlite;
+      fts3SnippetDetails(&sIter, mCovered, &iPos, &iScore, &mCover,&mHighlite);
+      assert( iScore>=0 );
+      if( iScore>iBestScore ){
+        pFragment->iPos = iPos;
+        pFragment->hlmask = mHighlite;
+        pFragment->covered = mCover;
+        iBestScore = iScore;
+      }
+    }
+
+    *piScore = iBestScore;
+  }
+  sqlite3_free(sIter.aPhrase);
+  return rc;
+}
+
+
+/*
+** Append a string to the string-buffer passed as the first argument.
+**
+** If nAppend is negative, then the length of the string zAppend is
+** determined using strlen().
+*/
+static int fts3StringAppend(
+  StrBuffer *pStr,                /* Buffer to append to */
+  const char *zAppend,            /* Pointer to data to append to buffer */
+  int nAppend                     /* Size of zAppend in bytes (or -1) */
+){
+  if( nAppend<0 ){
+    nAppend = (int)strlen(zAppend);
+  }
+
+  /* If there is insufficient space allocated at StrBuffer.z, use realloc()
+  ** to grow the buffer until so that it is big enough to accommodate the
+  ** appended data.
+  */
+  if( (i64)pStr->n+(i64)nAppend+1>=(i64)pStr->nAlloc ){
+    i64 nAlloc = pStr->nAlloc+(i64)nAppend+100;
+    char *zNew = sqlite3_realloc64(pStr->z, nAlloc);
+    if( !zNew ){
+      return SQLITE_NOMEM;
+    }
+    pStr->z = zNew;
+    pStr->nAlloc = nAlloc;
+  }
+  assert( pStr->z!=0 && (pStr->nAlloc >= pStr->n+nAppend+1) );
+
+  /* Append the data to the string buffer. */
+  memcpy(&pStr->z[pStr->n], zAppend, nAppend);
+  pStr->n += nAppend;
+  pStr->z[pStr->n] = '\0';
+
+  return SQLITE_OK;
+}
+
+/*
+** The fts3BestSnippet() function often selects snippets that end with a
+** query term. That is, the final term of the snippet is always a term
+** that requires highlighting. For example, if 'X' is a highlighted term
+** and '.' is a non-highlighted term, BestSnippet() may select:
+**
+**     ........X.....X
+**
+** This function "shifts" the beginning of the snippet forward in the
+** document so that there are approximately the same number of
+** non-highlighted terms to the right of the final highlighted term as there
+** are to the left of the first highlighted term. For example, to this:
+**
+**     ....X.....X....
+**
+** This is done as part of extracting the snippet text, not when selecting
+** the snippet. Snippet selection is done based on doclists only, so there
+** is no way for fts3BestSnippet() to know whether or not the document
+** actually contains terms that follow the final highlighted term.
+*/
+static int fts3SnippetShift(
+  Fts3Table *pTab,                /* FTS3 table snippet comes from */
+  int iLangid,                    /* Language id to use in tokenizing */
+  int nSnippet,                   /* Number of tokens desired for snippet */
+  const char *zDoc,               /* Document text to extract snippet from */
+  int nDoc,                       /* Size of buffer zDoc in bytes */
+  int *piPos,                     /* IN/OUT: First token of snippet */
+  u64 *pHlmask                    /* IN/OUT: Mask of tokens to highlight */
+){
+  u64 hlmask = *pHlmask;          /* Local copy of initial highlight-mask */
+
+  if( hlmask ){
+    int nLeft;                    /* Tokens to the left of first highlight */
+    int nRight;                   /* Tokens to the right of last highlight */
+    int nDesired;                 /* Ideal number of tokens to shift forward */
+
+    for(nLeft=0; !(hlmask & ((u64)1 << nLeft)); nLeft++);
+    for(nRight=0; !(hlmask & ((u64)1 << (nSnippet-1-nRight))); nRight++);
+    assert( (nSnippet-1-nRight)<=63 && (nSnippet-1-nRight)>=0 );
+    nDesired = (nLeft-nRight)/2;
+
+    /* Ideally, the start of the snippet should be pushed forward in the
+    ** document nDesired tokens. This block checks if there are actually
+    ** nDesired tokens to the right of the snippet. If so, *piPos and
+    ** *pHlMask are updated to shift the snippet nDesired tokens to the
+    ** right. Otherwise, the snippet is shifted by the number of tokens
+    ** available.
+    */
+    if( nDesired>0 ){
+      int nShift;                 /* Number of tokens to shift snippet by */
+      int iCurrent = 0;           /* Token counter */
+      int rc;                     /* Return Code */
+      sqlite3_tokenizer_module *pMod;
+      sqlite3_tokenizer_cursor *pC;
+      pMod = (sqlite3_tokenizer_module *)pTab->pTokenizer->pModule;
+
+      /* Open a cursor on zDoc/nDoc. Check if there are (nSnippet+nDesired)
+      ** or more tokens in zDoc/nDoc.
+      */
+      rc = sqlite3Fts3OpenTokenizer(pTab->pTokenizer, iLangid, zDoc, nDoc, &pC);
+      if( rc!=SQLITE_OK ){
+        return rc;
+      }
+      while( rc==SQLITE_OK && iCurrent<(nSnippet+nDesired) ){
+        const char *ZDUMMY; int DUMMY1 = 0, DUMMY2 = 0, DUMMY3 = 0;
+        rc = pMod->xNext(pC, &ZDUMMY, &DUMMY1, &DUMMY2, &DUMMY3, &iCurrent);
+      }
+      pMod->xClose(pC);
+      if( rc!=SQLITE_OK && rc!=SQLITE_DONE ){ return rc; }
+
+      nShift = (rc==SQLITE_DONE)+iCurrent-nSnippet;
+      assert( nShift<=nDesired );
+      if( nShift>0 ){
+        *piPos += nShift;
+        *pHlmask = hlmask >> nShift;
+      }
+    }
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Extract the snippet text for fragment pFragment from cursor pCsr and
+** append it to string buffer pOut.
+*/
+static int fts3SnippetText(
+  Fts3Cursor *pCsr,               /* FTS3 Cursor */
+  SnippetFragment *pFragment,     /* Snippet to extract */
+  int iFragment,                  /* Fragment number */
+  int isLast,                     /* True for final fragment in snippet */
+  int nSnippet,                   /* Number of tokens in extracted snippet */
+  const char *zOpen,              /* String inserted before highlighted term */
+  const char *zClose,             /* String inserted after highlighted term */
+  const char *zEllipsis,          /* String inserted between snippets */
+  StrBuffer *pOut                 /* Write output here */
+){
+  Fts3Table *pTab = (Fts3Table *)pCsr->base.pVtab;
+  int rc;                         /* Return code */
+  const char *zDoc;               /* Document text to extract snippet from */
+  int nDoc;                       /* Size of zDoc in bytes */
+  int iCurrent = 0;               /* Current token number of document */
+  int iEnd = 0;                   /* Byte offset of end of current token */
+  int isShiftDone = 0;            /* True after snippet is shifted */
+  int iPos = pFragment->iPos;     /* First token of snippet */
+  u64 hlmask = pFragment->hlmask; /* Highlight-mask for snippet */
+  int iCol = pFragment->iCol+1;   /* Query column to extract text from */
+  sqlite3_tokenizer_module *pMod; /* Tokenizer module methods object */
+  sqlite3_tokenizer_cursor *pC;   /* Tokenizer cursor open on zDoc/nDoc */
+
+  zDoc = (const char *)sqlite3_column_text(pCsr->pStmt, iCol);
+  if( zDoc==0 ){
+    if( sqlite3_column_type(pCsr->pStmt, iCol)!=SQLITE_NULL ){
+      return SQLITE_NOMEM;
+    }
+    return SQLITE_OK;
+  }
+  nDoc = sqlite3_column_bytes(pCsr->pStmt, iCol);
+
+  /* Open a token cursor on the document. */
+  pMod = (sqlite3_tokenizer_module *)pTab->pTokenizer->pModule;
+  rc = sqlite3Fts3OpenTokenizer(pTab->pTokenizer, pCsr->iLangid, zDoc,nDoc,&pC);
+  if( rc!=SQLITE_OK ){
+    return rc;
+  }
+
+  while( rc==SQLITE_OK ){
+    const char *ZDUMMY;           /* Dummy argument used with tokenizer */
+    int DUMMY1 = -1;              /* Dummy argument used with tokenizer */
+    int iBegin = 0;               /* Offset in zDoc of start of token */
+    int iFin = 0;                 /* Offset in zDoc of end of token */
+    int isHighlight = 0;          /* True for highlighted terms */
+
+    /* Variable DUMMY1 is initialized to a negative value above. Elsewhere
+    ** in the FTS code the variable that the third argument to xNext points to
+    ** is initialized to zero before the first (*but not necessarily
+    ** subsequent*) call to xNext(). This is done for a particular application
+    ** that needs to know whether or not the tokenizer is being used for
+    ** snippet generation or for some other purpose.
+    **
+    ** Extreme care is required when writing code to depend on this
+    ** initialization. It is not a documented part of the tokenizer interface.
+    ** If a tokenizer is used directly by any code outside of FTS, this
+    ** convention might not be respected.  */
+    rc = pMod->xNext(pC, &ZDUMMY, &DUMMY1, &iBegin, &iFin, &iCurrent);
+    if( rc!=SQLITE_OK ){
+      if( rc==SQLITE_DONE ){
+        /* Special case - the last token of the snippet is also the last token
+        ** of the column. Append any punctuation that occurred between the end
+        ** of the previous token and the end of the document to the output.
+        ** Then break out of the loop. */
+        rc = fts3StringAppend(pOut, &zDoc[iEnd], -1);
+      }
+      break;
+    }
+    if( iCurrent<iPos ){ continue; }
+
+    if( !isShiftDone ){
+      int n = nDoc - iBegin;
+      rc = fts3SnippetShift(
+          pTab, pCsr->iLangid, nSnippet, &zDoc[iBegin], n, &iPos, &hlmask
+      );
+      isShiftDone = 1;
+
+      /* Now that the shift has been done, check if the initial "..." are
+      ** required. They are required if (a) this is not the first fragment,
+      ** or (b) this fragment does not begin at position 0 of its column.
+      */
+      if( rc==SQLITE_OK ){
+        if( iPos>0 || iFragment>0 ){
+          rc = fts3StringAppend(pOut, zEllipsis, -1);
+        }else if( iBegin ){
+          rc = fts3StringAppend(pOut, zDoc, iBegin);
+        }
+      }
+      if( rc!=SQLITE_OK || iCurrent<iPos ) continue;
+    }
+
+    if( iCurrent>=(iPos+nSnippet) ){
+      if( isLast ){
+        rc = fts3StringAppend(pOut, zEllipsis, -1);
+      }
+      break;
+    }
+
+    /* Set isHighlight to true if this term should be highlighted. */
+    isHighlight = (hlmask & ((u64)1 << (iCurrent-iPos)))!=0;
+
+    if( iCurrent>iPos ) rc = fts3StringAppend(pOut, &zDoc[iEnd], iBegin-iEnd);
+    if( rc==SQLITE_OK && isHighlight ) rc = fts3StringAppend(pOut, zOpen, -1);
+    if( rc==SQLITE_OK ) rc = fts3StringAppend(pOut, &zDoc[iBegin], iFin-iBegin);
+    if( rc==SQLITE_OK && isHighlight ) rc = fts3StringAppend(pOut, zClose, -1);
+
+    iEnd = iFin;
+  }
+
+  pMod->xClose(pC);
+  return rc;
+}
+
+
+/*
+** This function is used to count the entries in a column-list (a
+** delta-encoded list of term offsets within a single column of a single
+** row). When this function is called, *ppCollist should point to the
+** beginning of the first varint in the column-list (the varint that
+** contains the position of the first matching term in the column data).
+** Before returning, *ppCollist is set to point to the first byte after
+** the last varint in the column-list (either the 0x00 signifying the end
+** of the position-list, or the 0x01 that precedes the column number of
+** the next column in the position-list).
+**
+** The number of elements in the column-list is returned.
+*/
+static int fts3ColumnlistCount(char **ppCollist){
+  char *pEnd = *ppCollist;
+  char c = 0;
+  int nEntry = 0;
+
+  /* A column-list is terminated by either a 0x01 or 0x00. */
+  while( 0xFE & (*pEnd | c) ){
+    c = *pEnd++ & 0x80;
+    if( !c ) nEntry++;
+  }
+
+  *ppCollist = pEnd;
+  return nEntry;
+}
+
+/*
+** This function gathers 'y' or 'b' data for a single phrase.
+*/
+static int fts3ExprLHits(
+  Fts3Expr *pExpr,                /* Phrase expression node */
+  MatchInfo *p                    /* Matchinfo context */
+){
+  Fts3Table *pTab = (Fts3Table *)p->pCursor->base.pVtab;
+  int iStart;
+  Fts3Phrase *pPhrase = pExpr->pPhrase;
+  char *pIter = pPhrase->doclist.pList;
+  int iCol = 0;
+
+  assert( p->flag==FTS3_MATCHINFO_LHITS_BM || p->flag==FTS3_MATCHINFO_LHITS );
+  if( p->flag==FTS3_MATCHINFO_LHITS ){
+    iStart = pExpr->iPhrase * p->nCol;
+  }else{
+    iStart = pExpr->iPhrase * ((p->nCol + 31) / 32);
+  }
+
+  if( pIter ) while( 1 ){
+    int nHit = fts3ColumnlistCount(&pIter);
+    if( (pPhrase->iColumn>=pTab->nColumn || pPhrase->iColumn==iCol) ){
+      if( p->flag==FTS3_MATCHINFO_LHITS ){
+        p->aMatchinfo[iStart + iCol] = (u32)nHit;
+      }else if( nHit ){
+        p->aMatchinfo[iStart + iCol/32] |= (1U << (iCol&0x1F));
+      }
+    }
+    assert( *pIter==0x00 || *pIter==0x01 );
+    if( *pIter!=0x01 ) break;
+    pIter++;
+    pIter += fts3GetVarint32(pIter, &iCol);
+    if( iCol>=p->nCol ) return FTS_CORRUPT_VTAB;
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Gather the results for matchinfo directives 'y' and 'b'.
+*/
+static int fts3ExprLHitGather(
+  Fts3Expr *pExpr,
+  MatchInfo *p
+){
+  int rc = SQLITE_OK;
+  assert( (pExpr->pLeft==0)==(pExpr->pRight==0) );
+  if( pExpr->bEof==0 && pExpr->iDocid==p->pCursor->iPrevId ){
+    if( pExpr->pLeft ){
+      rc = fts3ExprLHitGather(pExpr->pLeft, p);
+      if( rc==SQLITE_OK ) rc = fts3ExprLHitGather(pExpr->pRight, p);
+    }else{
+      rc = fts3ExprLHits(pExpr, p);
+    }
+  }
+  return rc;
+}
+
+/*
+** sqlite3Fts3ExprIterate() callback used to collect the "global" matchinfo
+** stats for a single query.
+**
+** sqlite3Fts3ExprIterate() callback to load the 'global' elements of a
+** FTS3_MATCHINFO_HITS matchinfo array. The global stats are those elements
+** of the matchinfo array that are constant for all rows returned by the
+** current query.
+**
+** Argument pCtx is actually a pointer to a struct of type MatchInfo. This
+** function populates Matchinfo.aMatchinfo[] as follows:
+**
+**   for(iCol=0; iCol<nCol; iCol++){
+**     aMatchinfo[3*iPhrase*nCol + 3*iCol + 1] = X;
+**     aMatchinfo[3*iPhrase*nCol + 3*iCol + 2] = Y;
+**   }
+**
+** where X is the number of matches for phrase iPhrase is column iCol of all
+** rows of the table. Y is the number of rows for which column iCol contains
+** at least one instance of phrase iPhrase.
+**
+** If the phrase pExpr consists entirely of deferred tokens, then all X and
+** Y values are set to nDoc, where nDoc is the number of documents in the
+** file system. This is done because the full-text index doclist is required
+** to calculate these values properly, and the full-text index doclist is
+** not available for deferred tokens.
+*/
+static int fts3ExprGlobalHitsCb(
+  Fts3Expr *pExpr,                /* Phrase expression node */
+  int iPhrase,                    /* Phrase number (numbered from zero) */
+  void *pCtx                      /* Pointer to MatchInfo structure */
+){
+  MatchInfo *p = (MatchInfo *)pCtx;
+  return sqlite3Fts3EvalPhraseStats(
+      p->pCursor, pExpr, &p->aMatchinfo[3*iPhrase*p->nCol]
+  );
+}
+
+/*
+** sqlite3Fts3ExprIterate() callback used to collect the "local" part of the
+** FTS3_MATCHINFO_HITS array. The local stats are those elements of the
+** array that are different for each row returned by the query.
+*/
+static int fts3ExprLocalHitsCb(
+  Fts3Expr *pExpr,                /* Phrase expression node */
+  int iPhrase,                    /* Phrase number */
+  void *pCtx                      /* Pointer to MatchInfo structure */
+){
+  int rc = SQLITE_OK;
+  MatchInfo *p = (MatchInfo *)pCtx;
+  int iStart = iPhrase * p->nCol * 3;
+  int i;
+
+  for(i=0; i<p->nCol && rc==SQLITE_OK; i++){
+    char *pCsr;
+    rc = sqlite3Fts3EvalPhrasePoslist(p->pCursor, pExpr, i, &pCsr);
+    if( pCsr ){
+      p->aMatchinfo[iStart+i*3] = fts3ColumnlistCount(&pCsr);
+    }else{
+      p->aMatchinfo[iStart+i*3] = 0;
+    }
+  }
+
+  return rc;
+}
+
+static int fts3MatchinfoCheck(
+  Fts3Table *pTab,
+  char cArg,
+  char **pzErr
+){
+  if( (cArg==FTS3_MATCHINFO_NPHRASE)
+   || (cArg==FTS3_MATCHINFO_NCOL)
+   || (cArg==FTS3_MATCHINFO_NDOC && pTab->bFts4)
+   || (cArg==FTS3_MATCHINFO_AVGLENGTH && pTab->bFts4)
+   || (cArg==FTS3_MATCHINFO_LENGTH && pTab->bHasDocsize)
+   || (cArg==FTS3_MATCHINFO_LCS)
+   || (cArg==FTS3_MATCHINFO_HITS)
+   || (cArg==FTS3_MATCHINFO_LHITS)
+   || (cArg==FTS3_MATCHINFO_LHITS_BM)
+  ){
+    return SQLITE_OK;
+  }
+  sqlite3Fts3ErrMsg(pzErr, "unrecognized matchinfo request: %c", cArg);
+  return SQLITE_ERROR;
+}
+
+static size_t fts3MatchinfoSize(MatchInfo *pInfo, char cArg){
+  size_t nVal;                      /* Number of integers output by cArg */
+
+  switch( cArg ){
+    case FTS3_MATCHINFO_NDOC:
+    case FTS3_MATCHINFO_NPHRASE:
+    case FTS3_MATCHINFO_NCOL:
+      nVal = 1;
+      break;
+
+    case FTS3_MATCHINFO_AVGLENGTH:
+    case FTS3_MATCHINFO_LENGTH:
+    case FTS3_MATCHINFO_LCS:
+      nVal = pInfo->nCol;
+      break;
+
+    case FTS3_MATCHINFO_LHITS:
+      nVal = (size_t)pInfo->nCol * pInfo->nPhrase;
+      break;
+
+    case FTS3_MATCHINFO_LHITS_BM:
+      nVal = (size_t)pInfo->nPhrase * ((pInfo->nCol + 31) / 32);
+      break;
+
+    default:
+      assert( cArg==FTS3_MATCHINFO_HITS );
+      nVal = (size_t)pInfo->nCol * pInfo->nPhrase * 3;
+      break;
+  }
+
+  return nVal;
+}
+
+static int fts3MatchinfoSelectDoctotal(
+  Fts3Table *pTab,
+  sqlite3_stmt **ppStmt,
+  sqlite3_int64 *pnDoc,
+  const char **paLen,
+  const char **ppEnd
+){
+  sqlite3_stmt *pStmt;
+  const char *a;
+  const char *pEnd;
+  sqlit

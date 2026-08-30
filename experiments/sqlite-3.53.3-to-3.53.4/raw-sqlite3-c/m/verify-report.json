@@ -1,0 +1,8 @@
+{
+  "file": "outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/raw-sqlite3-c/m/rebuilt.bin",
+  "expected_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "actual_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "expected_bytes": 9515341,
+  "actual_bytes": 9515341,
+  "verified": true
+}

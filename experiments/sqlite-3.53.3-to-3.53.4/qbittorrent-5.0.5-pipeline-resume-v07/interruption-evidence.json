@@ -1,0 +1,30 @@
+{
+  "date": "2026-08-30",
+  "shardmeld_version": "0.7.0",
+  "binary_sha256": "1dc4739d8c81fb060907f8049be84fee3f24f02050fd2ab32910583a50f80195",
+  "external_peer": "qBittorrent 5.0.5",
+  "external_peer_address": "127.0.0.1:45990",
+  "throttled_proxy": {
+    "listen": "127.0.0.1:45991",
+    "upstream": "127.0.0.1:45990",
+    "down_bytes_per_second": 65536
+  },
+  "termination_signal": "SIGTERM",
+  "state_observed_after_termination": {
+    "partial_file_present": true,
+    "resume_file_present": true,
+    "final_output_present": false,
+    "completed_piece_count": 1,
+    "completed_piece_indices": [0]
+  },
+  "resume_result": {
+    "resumed_verified_pieces": 1,
+    "resumed_verified_piece_bytes": 262144,
+    "network_payload_avoided_by_resume": 81920,
+    "network_block_requests": 82,
+    "network_payload_bytes": 1343488,
+    "output_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+    "verified": true,
+    "resume_sidecars_removed_after_success": true
+  }
+}

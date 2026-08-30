@@ -1,0 +1,19 @@
+[package]
+name = "meld-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "shardmeld"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+meld-core = { path = "../meld-core" }
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,2286 @@
+    sqlite3_result_text(ctx, "[]", 2, SQLITE_STATIC);
+  }
+  sqlite3_result_subtype(ctx, JSON_SUBTYPE);
+}
+static void jsonArrayValue(sqlite3_context *ctx){
+  jsonArrayCompute(ctx, 0);
+}
+static void jsonArrayFinal(sqlite3_context *ctx){
+  jsonArrayCompute(ctx, 1);
+}
+
+#ifndef SQLITE_OMIT_WINDOWFUNC
+/*
+** This method works for both json_group_array() and json_group_object().
+** It works by removing the first element of the group by searching forward
+** to the first comma (",") that is not within a string and deleting all
+** text through that comma.
+*/
+static void jsonGroupInverse(
+  sqlite3_context *ctx,
+  int argc,
+  sqlite3_value **argv
+){
+  unsigned int i;
+  int inStr = 0;
+  int nNest = 0;
+  char *z;
+  char c;
+  JsonString *pStr;
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(argv);
+  pStr = (JsonString*)sqlite3_aggregate_context(ctx, 0);
+  /* pStr is always non-NULL since jsonArrayStep() or jsonObjectStep() will
+  ** always have been called to initialize it */
+  if( NEVER(!pStr) ) return;
+  z = pStr->zBuf;
+  for(i=1; i<pStr->nUsed && ((c = z[i])!=',' || inStr || nNest); i++){
+    if( c=='"' ){
+      inStr = !inStr;
+    }else if( c=='\\' ){
+      i++;
+    }else if( !inStr ){
+      if( c=='{' || c=='[' ) nNest++;
+      if( c=='}' || c==']' ) nNest--;
+    }
+  }
+  if( i<pStr->nUsed ){
+    pStr->nUsed -= i;
+    memmove(&z[1], &z[i+1], (size_t)pStr->nUsed-1);
+    z[pStr->nUsed] = 0;
+  }else{
+    pStr->nUsed = 1;
+  }
+}
+#else
+# define jsonGroupInverse 0
+#endif
+
+
+/*
+** json_group_obj(NAME,VALUE)
+**
+** Return a JSON object composed of all names and values in the aggregate.
+**
+** Rows for which NAME is NULL do not result in a new entry.  However, we
+** do initially insert a "@" entry into the growing string for each null entry
+** and change the first character of the string to "@" to signal that the
+** string contains null entries.  The "@" markers are needed in order to
+** correctly process xInverse() requests.  The initial "@" is converted
+** back into "{" and the "@" null values are removed by jsonObjectCompute().
+*/
+static void jsonObjectStep(
+  sqlite3_context *ctx,
+  int argc,
+  sqlite3_value **argv
+){
+  JsonString *pStr;
+  const char *z;
+  u32 n;
+  UNUSED_PARAMETER(argc);
+  pStr = (JsonString*)sqlite3_aggregate_context(ctx, sizeof(*pStr));
+  if( pStr ){
+    z = (const char*)sqlite3_value_text(argv[0]);
+    n = sqlite3Strlen30(z);
+    if( pStr->zBuf==0 ){
+      jsonStringInit(pStr, ctx);
+      jsonAppendChar(pStr, '{');
+    }else if( pStr->nUsed>1 ){
+      jsonAppendChar(pStr, ',');
+    }
+    pStr->pCtx = ctx;
+    if( z!=0 ){
+      jsonAppendString(pStr, z, n);
+      jsonAppendChar(pStr, ':');
+      jsonAppendSqlValue(pStr, argv[1]);
+    }else{
+      pStr->zBuf[0] = '@';
+      jsonAppendRawNZ(pStr, "@", 1);
+    }
+  }
+}
+static void jsonObjectCompute(sqlite3_context *ctx, int isFinal){
+  JsonString *pStr;
+  int flags = SQLITE_PTR_TO_INT(sqlite3_user_data(ctx));
+  pStr = (JsonString*)sqlite3_aggregate_context(ctx, 0);
+  if( pStr ){
+    JsonString *pOgStr = pStr;
+    JsonString tmpStr;
+    jsonAppendRawNZ(pOgStr, "}", 2);  /* Ensure it is zero-terminated */
+    jsonStringTrimOneChar(pOgStr);    /* Remove the zero terminator */
+    pStr->pCtx = ctx;
+    if( pStr->eErr ){
+      jsonReturnString(pStr, 0, 0);
+      return;
+    }
+    if( pStr->zBuf[0]!='{' ){
+      /* The string contains null entries that need to be removed */
+      u64 i, j;
+      int inStr = 0;
+      if( !isFinal ){
+        /* Work with a temporary copy of the string if this is not the
+        ** final result */
+        jsonStringInit(&tmpStr, ctx);
+        jsonAppendRawNZ(&tmpStr, pStr->zBuf, pStr->nUsed+1);
+        pStr = &tmpStr;
+        if( pStr->eErr ){
+          jsonReturnString(pStr, 0, 0);
+          return;
+        }
+        jsonStringTrimOneChar(pStr);  /* Remove zero terminator */
+      }
+      /* Fix up the string by changing the initial "@" flag back to
+      ** to "{" and removing all subsequence "@" entries, with their
+      ** associated comma delimeters. */
+      pStr->zBuf[0] = '{';
+      for(i=j=1; i<pStr->nUsed; i++){
+        char c = pStr->zBuf[i];
+        if( c=='"' ){
+          inStr = !inStr;
+          pStr->zBuf[j++] = '"';
+        }else if( c=='\\' ){
+          pStr->zBuf[j++] = '\\';
+          pStr->zBuf[j++] = pStr->zBuf[++i];
+        }else if( c=='@' && !inStr ){
+          assert( i+1<pStr->nUsed );
+          if( pStr->zBuf[i+1]==',' ){
+            i++;
+          }else if( pStr->zBuf[j-1]==',' ){
+            j--;
+          }
+        }else{
+          pStr->zBuf[j++] = c;
+        }
+      }
+      pStr->zBuf[j] = 0;  /* Restore zero terminator */
+      pStr->nUsed = j;    /* Truncate the string */
+    }
+    if( flags & JSON_BLOB ){
+      jsonReturnStringAsBlob(pStr);
+      if( isFinal ){
+        if( !pStr->bStatic ) sqlite3RCStrUnref(pStr->zBuf);
+      }else{
+        jsonStringTrimOneChar(pOgStr);
+      }
+    }else if( isFinal ){
+      sqlite3_result_text(ctx, pStr->zBuf, (int)pStr->nUsed,
+                          pStr->bStatic ? SQLITE_TRANSIENT :
+                          sqlite3RCStrUnref);
+      pStr->bStatic = 1;
+    }else{
+      sqlite3_result_text(ctx, pStr->zBuf, (int)pStr->nUsed, SQLITE_TRANSIENT);
+      jsonStringTrimOneChar(pOgStr);
+    }
+    if( pStr!=pOgStr ) jsonStringReset(pStr);
+  }else if( flags & JSON_BLOB ){
+    static const unsigned char emptyObject = 0x0c;
+    sqlite3_result_blob(ctx, &emptyObject, 1, SQLITE_STATIC);
+  }else{
+    sqlite3_result_text(ctx, "{}", 2, SQLITE_STATIC);
+  }
+  sqlite3_result_subtype(ctx, JSON_SUBTYPE);
+}
+static void jsonObjectValue(sqlite3_context *ctx){
+  jsonObjectCompute(ctx, 0);
+}
+static void jsonObjectFinal(sqlite3_context *ctx){
+  jsonObjectCompute(ctx, 1);
+}
+
+
+
+#ifndef SQLITE_OMIT_VIRTUALTABLE
+/****************************************************************************
+** The json_each virtual table
+****************************************************************************/
+typedef struct JsonParent JsonParent;
+struct JsonParent {
+  u32 iHead;                 /* Start of object or array */
+  u32 iValue;                /* Start of the value */
+  u32 iEnd;                  /* First byte past the end */
+  u32 nPath;                 /* Length of path */
+  i64 iKey;                  /* Key for JSONB_ARRAY */
+};
+
+typedef struct JsonEachCursor JsonEachCursor;
+struct JsonEachCursor {
+  sqlite3_vtab_cursor base;  /* Base class - must be first */
+  u32 iRowid;                /* The rowid */
+  u32 i;                     /* Index in sParse.aBlob[] of current row */
+  u32 iEnd;                  /* EOF when i equals or exceeds this value */
+  u32 nRoot;                 /* Size of the root path in bytes */
+  u8 eType;                  /* Type of the container for element i */
+  u8 bRecursive;             /* True for json_tree().  False for json_each() */
+  u8 eMode;                  /* 1 for json_each().  2 for jsonb_each() */
+  u32 nParent;               /* Current nesting depth */
+  u32 nParentAlloc;          /* Space allocated for aParent[] */
+  JsonParent *aParent;       /* Parent elements of i */
+  sqlite3 *db;               /* Database connection */
+  JsonString path;           /* Current path */
+  JsonParse sParse;          /* Parse of the input JSON */
+};
+typedef struct JsonEachConnection JsonEachConnection;
+struct JsonEachConnection {
+  sqlite3_vtab base;         /* Base class - must be first */
+  sqlite3 *db;               /* Database connection */
+  u8 eMode;                  /* 1 for json_each().  2 for jsonb_each() */
+  u8 bRecursive;             /* True for json_tree().  False for json_each() */
+};
+
+
+/* Constructor for the json_each virtual table */
+static int jsonEachConnect(
+  sqlite3 *db,
+  void *pAux,
+  int argc, const char *const*argv,
+  sqlite3_vtab **ppVtab,
+  char **pzErr
+){
+  JsonEachConnection *pNew;
+  int rc;
+
+/* Column numbers */
+#define JEACH_KEY     0
+#define JEACH_VALUE   1
+#define JEACH_TYPE    2
+#define JEACH_ATOM    3
+#define JEACH_ID      4
+#define JEACH_PARENT  5
+#define JEACH_FULLKEY 6
+#define JEACH_PATH    7
+/* The xBestIndex method assumes that the JSON and ROOT columns are
+** the last two columns in the table.  Should this ever changes, be
+** sure to update the xBestIndex method. */
+#define JEACH_JSON    8
+#define JEACH_ROOT    9
+
+  UNUSED_PARAMETER(pzErr);
+  UNUSED_PARAMETER(argv);
+  UNUSED_PARAMETER(argc);
+  UNUSED_PARAMETER(pAux);
+  rc = sqlite3_declare_vtab(db,
+     "CREATE TABLE x(key,value,type,atom,id,parent,fullkey,path,"
+                    "json HIDDEN,root HIDDEN)");
+  if( rc==SQLITE_OK ){
+    pNew = (JsonEachConnection*)sqlite3DbMallocZero(db, sizeof(*pNew));
+    *ppVtab = (sqlite3_vtab*)pNew;
+    if( pNew==0 ) return SQLITE_NOMEM;
+    sqlite3_vtab_config(db, SQLITE_VTAB_INNOCUOUS);
+    pNew->db = db;
+    pNew->eMode = argv[0][4]=='b' ? 2 : 1;
+    pNew->bRecursive = argv[0][4+pNew->eMode]=='t';
+  }
+  return rc;
+}
+
+/* destructor for json_each virtual table */
+static int jsonEachDisconnect(sqlite3_vtab *pVtab){
+  JsonEachConnection *p = (JsonEachConnection*)pVtab;
+  sqlite3DbFree(p->db, pVtab);
+  return SQLITE_OK;
+}
+
+/* constructor for a JsonEachCursor object for json_each()/json_tree(). */
+static int jsonEachOpen(sqlite3_vtab *p, sqlite3_vtab_cursor **ppCursor){
+  JsonEachConnection *pVtab = (JsonEachConnection*)p;
+  JsonEachCursor *pCur;
+
+  UNUSED_PARAMETER(p);
+  pCur = sqlite3DbMallocZero(pVtab->db, sizeof(*pCur));
+  if( pCur==0 ) return SQLITE_NOMEM;
+  pCur->db = pVtab->db;
+  pCur->eMode = pVtab->eMode;
+  pCur->bRecursive = pVtab->bRecursive;
+  jsonStringZero(&pCur->path);
+  *ppCursor = &pCur->base;
+  return SQLITE_OK;
+}
+
+/* Reset a JsonEachCursor back to its original state.  Free any memory
+** held. */
+static void jsonEachCursorReset(JsonEachCursor *p){
+  jsonParseReset(&p->sParse);
+  jsonStringReset(&p->path);
+  sqlite3DbFree(p->db, p->aParent);
+  p->iRowid = 0;
+  p->i = 0;
+  p->aParent = 0;
+  p->nParent = 0;
+  p->nParentAlloc = 0;
+  p->iEnd = 0;
+  p->eType = 0;
+}
+
+/* Destructor for a jsonEachCursor object */
+static int jsonEachClose(sqlite3_vtab_cursor *cur){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  jsonEachCursorReset(p);
+
+  sqlite3DbFree(p->db, cur);
+  return SQLITE_OK;
+}
+
+/* Return TRUE if the jsonEachCursor object has been advanced off the end
+** of the JSON object */
+static int jsonEachEof(sqlite3_vtab_cursor *cur){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  return p->i >= p->iEnd;
+}
+
+/*
+** If the cursor is currently pointing at the label of a object entry,
+** then return the index of the value.  For all other cases, return the
+** current pointer position, which is the value.
+*/
+static int jsonSkipLabel(JsonEachCursor *p){
+  if( p->eType==JSONB_OBJECT ){
+    u32 sz = 0;
+    u32 n = jsonbPayloadSize(&p->sParse, p->i, &sz);
+    sz += p->i + n;
+    if( sz >= p->sParse.nBlob ) sz = p->i;
+    return sz;
+  }else{
+    return p->i;
+  }
+}
+
+/*
+** Append the path name for the current element.
+*/
+static void jsonAppendPathName(JsonEachCursor *p){
+  assert( p->nParent>0 );
+  assert( p->eType==JSONB_ARRAY || p->eType==JSONB_OBJECT );
+  if( p->eType==JSONB_ARRAY ){
+    jsonPrintf(30, &p->path, "[%lld]", p->aParent[p->nParent-1].iKey);
+  }else{
+    u32 n, sz = 0, k, i;
+    const char *z;
+    int needQuote = 0;
+    n = jsonbPayloadSize(&p->sParse, p->i, &sz);
+    k = p->i + n;
+    z = (const char*)&p->sParse.aBlob[k];
+    if( sz==0 || !sqlite3Isalpha(z[0]) ){
+      needQuote = 1;
+    }else{
+      for(i=0; i<sz; i++){
+        if( !sqlite3Isalnum(z[i]) ){
+          needQuote = 1;
+          break;
+        }
+      }
+    }
+    if( needQuote ){
+      jsonPrintf(sz+4,&p->path,".\"%.*s\"", sz, z);
+    }else{
+      jsonPrintf(sz+2,&p->path,".%.*s", sz, z);
+    }
+  }
+}
+
+/* Advance the cursor to the next element for json_tree() */
+static int jsonEachNext(sqlite3_vtab_cursor *cur){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  int rc = SQLITE_OK;
+  if( p->bRecursive ){
+    u8 x;
+    u8 levelChange = 0;
+    u32 n, sz = 0;
+    u32 i = jsonSkipLabel(p);
+    x = p->sParse.aBlob[i] & 0x0f;
+    n = jsonbPayloadSize(&p->sParse, i, &sz);
+    if( x==JSONB_OBJECT || x==JSONB_ARRAY ){
+      JsonParent *pParent;
+      if( p->nParent>=p->nParentAlloc ){
+        JsonParent *pNew;
+        u64 nNew;
+        nNew = p->nParentAlloc*2 + 3;
+        pNew = sqlite3DbRealloc(p->db, p->aParent, sizeof(JsonParent)*nNew);
+        if( pNew==0 ) return SQLITE_NOMEM;
+        p->nParentAlloc = (u32)nNew;
+        p->aParent = pNew;
+      }
+      levelChange = 1;
+      pParent = &p->aParent[p->nParent];
+      pParent->iHead = p->i;
+      pParent->iValue = i;
+      pParent->iEnd = i + n + sz;
+      pParent->iKey = -1;
+      pParent->nPath = (u32)p->path.nUsed;
+      if( p->eType && p->nParent ){
+        jsonAppendPathName(p);
+        if( p->path.eErr ) rc = SQLITE_NOMEM;
+      }
+      p->nParent++;
+      p->i = i + n;
+    }else{
+      p->i = i + n + sz;
+    }
+    while( p->nParent>0 && p->i >= p->aParent[p->nParent-1].iEnd ){
+      p->nParent--;
+      p->path.nUsed = p->aParent[p->nParent].nPath;
+      levelChange = 1;
+    }
+    if( levelChange ){
+      if( p->nParent>0 ){
+        JsonParent *pParent = &p->aParent[p->nParent-1];
+        u32 iVal = pParent->iValue;
+        p->eType = p->sParse.aBlob[iVal] & 0x0f;
+      }else{
+        p->eType = 0;
+      }
+    }
+  }else{
+    u32 n, sz = 0;
+    u32 i = jsonSkipLabel(p);
+    n = jsonbPayloadSize(&p->sParse, i, &sz);
+    p->i = i + n + sz;
+  }
+  if( p->eType==JSONB_ARRAY && p->nParent ){
+    p->aParent[p->nParent-1].iKey++;
+  }
+  p->iRowid++;
+  return rc;
+}
+
+/* Length of the path for rowid==0 in bRecursive mode.
+*/
+static int jsonEachPathLength(JsonEachCursor *p){
+  u32 n = p->path.nUsed;
+  char *z = p->path.zBuf;
+  if( p->iRowid==0 && p->bRecursive && n>=2 ){
+    while( n>1 ){
+      n--;
+      if( z[n]=='[' || z[n]=='.' ){
+        u32 x, sz = 0;
+        char cSaved = z[n];
+        z[n] = 0;
+        assert( p->sParse.eEdit==0 );
+        x = jsonLookupStep(&p->sParse, 0, z+1, 0);
+        z[n] = cSaved;
+        if( JSON_LOOKUP_ISERROR(x) ) continue;
+        if( x + jsonbPayloadSize(&p->sParse, x, &sz) == p->i ) break;
+      }
+    }
+  }
+  return n;
+}
+
+/* Return the value of a column */
+static int jsonEachColumn(
+  sqlite3_vtab_cursor *cur,   /* The cursor */
+  sqlite3_context *ctx,       /* First argument to sqlite3_result_...() */
+  int iColumn                 /* Which column to return */
+){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  switch( iColumn ){
+    case JEACH_KEY: {
+      if( p->nParent==0 ){
+        u32 n, j;
+        if( p->nRoot==1 ) break;
+        j = jsonEachPathLength(p);
+        n = p->nRoot - j;
+        if( n==0 ){
+          break;
+        }else if( p->path.zBuf[j]=='[' ){
+          i64 x;
+          sqlite3Atoi64(&p->path.zBuf[j+1], &x, n-1, SQLITE_UTF8);
+          sqlite3_result_int64(ctx, x);
+        }else if( p->path.zBuf[j+1]=='"' ){
+          sqlite3_result_text(ctx, &p->path.zBuf[j+2], n-3, SQLITE_TRANSIENT);
+        }else{
+          sqlite3_result_text(ctx, &p->path.zBuf[j+1], n-1, SQLITE_TRANSIENT);
+        }
+        break;
+      }
+      if( p->eType==JSONB_OBJECT ){
+        jsonReturnFromBlob(&p->sParse, p->i, ctx, 1);
+      }else{
+        assert( p->eType==JSONB_ARRAY );
+        sqlite3_result_int64(ctx, p->aParent[p->nParent-1].iKey);
+      }
+      break;
+    }
+    case JEACH_VALUE: {
+      u32 i = jsonSkipLabel(p);
+      jsonReturnFromBlob(&p->sParse, i, ctx, p->eMode);
+      if( (p->sParse.aBlob[i] & 0x0f)>=JSONB_ARRAY ){
+        sqlite3_result_subtype(ctx, JSON_SUBTYPE);
+      }
+      break;
+    }
+    case JEACH_TYPE: {
+      u32 i = jsonSkipLabel(p);
+      u8 eType = p->sParse.aBlob[i] & 0x0f;
+      sqlite3_result_text(ctx, jsonbType[eType], -1, SQLITE_STATIC);
+      break;
+    }
+    case JEACH_ATOM: {
+      u32 i = jsonSkipLabel(p);
+      if( (p->sParse.aBlob[i] & 0x0f)<JSONB_ARRAY ){
+        jsonReturnFromBlob(&p->sParse, i, ctx, 1);
+      }
+      break;
+    }
+    case JEACH_ID: {
+      sqlite3_result_int64(ctx, (sqlite3_int64)p->i);
+      break;
+    }
+    case JEACH_PARENT: {
+      if( p->nParent>0 && p->bRecursive ){
+        sqlite3_result_int64(ctx, p->aParent[p->nParent-1].iHead);
+      }
+      break;
+    }
+    case JEACH_FULLKEY: {
+      u64 nBase = p->path.nUsed;
+      if( p->nParent ) jsonAppendPathName(p);
+      sqlite3_result_text64(ctx, p->path.zBuf, p->path.nUsed,
+                            SQLITE_TRANSIENT, SQLITE_UTF8);
+      p->path.nUsed = nBase;
+      break;
+    }
+    case JEACH_PATH: {
+      u32 n = jsonEachPathLength(p);
+      sqlite3_result_text64(ctx, p->path.zBuf, n,
+                            SQLITE_TRANSIENT, SQLITE_UTF8);
+      break;
+    }
+    default: {
+      sqlite3_result_text(ctx, p->path.zBuf, p->nRoot, SQLITE_STATIC);
+      break;
+    }
+    case JEACH_JSON: {
+      if( p->sParse.zJson==0 ){
+        sqlite3_result_blob(ctx, p->sParse.aBlob, p->sParse.nBlob,
+                            SQLITE_TRANSIENT);
+      }else{
+        sqlite3_result_text(ctx, p->sParse.zJson, -1, SQLITE_TRANSIENT);
+      }
+      break;
+    }
+  }
+  return SQLITE_OK;
+}
+
+/* Return the current rowid value */
+static int jsonEachRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  *pRowid = p->iRowid;
+  return SQLITE_OK;
+}
+
+/* The query strategy is to look for an equality constraint on the json
+** column.  Without such a constraint, the table cannot operate.  idxNum is
+** 1 if the constraint is found, 3 if the constraint and zRoot are found,
+** and 0 otherwise.
+*/
+static int jsonEachBestIndex(
+  sqlite3_vtab *tab,
+  sqlite3_index_info *pIdxInfo
+){
+  int i;                     /* Loop counter or computed array index */
+  int aIdx[2];               /* Index of constraints for JSON and ROOT */
+  int unusableMask = 0;      /* Mask of unusable JSON and ROOT constraints */
+  int idxMask = 0;           /* Mask of usable == constraints JSON and ROOT */
+  const struct sqlite3_index_constraint *pConstraint;
+
+  /* This implementation assumes that JSON and ROOT are the last two
+  ** columns in the table */
+  assert( JEACH_ROOT == JEACH_JSON+1 );
+  UNUSED_PARAMETER(tab);
+  aIdx[0] = aIdx[1] = -1;
+  pConstraint = pIdxInfo->aConstraint;
+  for(i=0; i<pIdxInfo->nConstraint; i++, pConstraint++){
+    int iCol;
+    int iMask;
+    if( pConstraint->iColumn < JEACH_JSON ) continue;
+    iCol = pConstraint->iColumn - JEACH_JSON;
+    assert( iCol==0 || iCol==1 );
+    testcase( iCol==0 );
+    iMask = 1 << iCol;
+    if( pConstraint->usable==0 ){
+      unusableMask |= iMask;
+    }else if( pConstraint->op==SQLITE_INDEX_CONSTRAINT_EQ ){
+      aIdx[iCol] = i;
+      idxMask |= iMask;
+    }
+  }
+  if( pIdxInfo->nOrderBy>0
+   && pIdxInfo->aOrderBy[0].iColumn<0
+   && pIdxInfo->aOrderBy[0].desc==0
+  ){
+    pIdxInfo->orderByConsumed = 1;
+  }
+
+  if( (unusableMask & ~idxMask)!=0 ){
+    /* If there are any unusable constraints on JSON or ROOT, then reject
+    ** this entire plan */
+    return SQLITE_CONSTRAINT;
+  }
+  if( aIdx[0]<0 ){
+    /* No JSON input.  Leave estimatedCost at the huge value that it was
+    ** initialized to to discourage the query planner from selecting this
+    ** plan. */
+    pIdxInfo->idxNum = 0;
+  }else{
+    pIdxInfo->estimatedCost = 1.0;
+    i = aIdx[0];
+    pIdxInfo->aConstraintUsage[i].argvIndex = 1;
+    pIdxInfo->aConstraintUsage[i].omit = 1;
+    if( aIdx[1]<0 ){
+      pIdxInfo->idxNum = 1;  /* Only JSON supplied.  Plan 1 */
+    }else{
+      i = aIdx[1];
+      pIdxInfo->aConstraintUsage[i].argvIndex = 2;
+      pIdxInfo->aConstraintUsage[i].omit = 1;
+      pIdxInfo->idxNum = 3;  /* Both JSON and ROOT are supplied.  Plan 3 */
+    }
+  }
+  return SQLITE_OK;
+}
+
+/* Start a search on a new JSON string */
+static int jsonEachFilter(
+  sqlite3_vtab_cursor *cur,
+  int idxNum, const char *idxStr,
+  int argc, sqlite3_value **argv
+){
+  JsonEachCursor *p = (JsonEachCursor*)cur;
+  const char *zRoot = 0;
+  u32 i, n, sz;
+
+  UNUSED_PARAMETER(idxStr);
+  UNUSED_PARAMETER(argc);
+  jsonEachCursorReset(p);
+  if( idxNum==0 ) return SQLITE_OK;
+  memset(&p->sParse, 0, sizeof(p->sParse));
+  p->sParse.nJPRef = 1;
+  p->sParse.db = p->db;
+  if( jsonArgIsJsonb(argv[0], &p->sParse) ){
+    /* We have JSONB */
+  }else{
+    p->sParse.zJson = (char*)sqlite3_value_text(argv[0]);
+    p->sParse.nJson = sqlite3_value_bytes(argv[0]);
+    if( p->sParse.zJson==0 ){
+      p->i = p->iEnd = 0;
+      return SQLITE_OK;
+    }
+    if( jsonConvertTextToBlob(&p->sParse, 0) ){
+      if( p->sParse.oom ){
+        return SQLITE_NOMEM;
+      }
+      goto json_each_malformed_input;
+    }
+  }
+  if( idxNum==3 ){
+    zRoot = (const char*)sqlite3_value_text(argv[1]);
+    if( zRoot==0 ) return SQLITE_OK;
+    if( zRoot[0]!='$' ){
+      sqlite3_free(cur->pVtab->zErrMsg);
+      cur->pVtab->zErrMsg = jsonBadPathError(0, zRoot, 0);
+      jsonEachCursorReset(p);
+      return cur->pVtab->zErrMsg ? SQLITE_ERROR : SQLITE_NOMEM;
+    }
+    p->nRoot = sqlite3Strlen30(zRoot);
+    if( zRoot[1]==0 ){
+      i = p->i = 0;
+      p->eType = 0;
+    }else{
+      i = jsonLookupStep(&p->sParse, 0, zRoot+1, 0);
+      if( JSON_LOOKUP_ISERROR(i) ){
+        if( i==JSON_LOOKUP_NOTFOUND ){
+          p->i = 0;
+          p->eType = 0;
+          p->iEnd = 0;
+          return SQLITE_OK;
+        }
+        sqlite3_free(cur->pVtab->zErrMsg);
+        cur->pVtab->zErrMsg = jsonBadPathError(0, zRoot, 0);
+        jsonEachCursorReset(p);
+        return cur->pVtab->zErrMsg ? SQLITE_ERROR : SQLITE_NOMEM;
+      }
+      if( p->sParse.iLabel ){
+        p->i = p->sParse.iLabel;
+        p->eType = JSONB_OBJECT;
+      }else{
+        p->i = i;
+        p->eType = JSONB_ARRAY;
+      }
+    }
+    jsonAppendRaw(&p->path, zRoot, p->nRoot);
+  }else{
+    i = p->i = 0;
+    p->eType = 0;
+    p->nRoot = 1;
+    jsonAppendRaw(&p->path, "$", 1);
+  }
+  p->nParent = 0;
+  n = jsonbPayloadSize(&p->sParse, i, &sz);
+  p->iEnd = i+n+sz;
+  if( (p->sParse.aBlob[i] & 0x0f)>=JSONB_ARRAY && !p->bRecursive ){
+    p->i = i + n;
+    p->eType = p->sParse.aBlob[i] & 0x0f;
+    p->aParent = sqlite3DbMallocZero(p->db, sizeof(JsonParent));
+    if( p->aParent==0 ) return SQLITE_NOMEM;
+    p->nParent = 1;
+    p->nParentAlloc = 1;
+    p->aParent[0].iKey = 0;
+    p->aParent[0].iEnd = p->iEnd;
+    p->aParent[0].iHead = p->i;
+    p->aParent[0].iValue = i;
+  }
+  return SQLITE_OK;
+
+json_each_malformed_input:
+  sqlite3_free(cur->pVtab->zErrMsg);
+  cur->pVtab->zErrMsg = sqlite3_mprintf("malformed JSON");
+  jsonEachCursorReset(p);
+  return cur->pVtab->zErrMsg ? SQLITE_ERROR : SQLITE_NOMEM;
+}
+
+/* The methods of the json_each virtual table */
+static sqlite3_module jsonEachModule = {
+  0,                         /* iVersion */
+  0,                         /* xCreate */
+  jsonEachConnect,           /* xConnect */
+  jsonEachBestIndex,         /* xBestIndex */
+  jsonEachDisconnect,        /* xDisconnect */
+  0,                         /* xDestroy */
+  jsonEachOpen,              /* xOpen - open a cursor */
+  jsonEachClose,             /* xClose - close a cursor */
+  jsonEachFilter,            /* xFilter - configure scan constraints */
+  jsonEachNext,              /* xNext - advance a cursor */
+  jsonEachEof,               /* xEof - check for end of scan */
+  jsonEachColumn,            /* xColumn - read data */
+  jsonEachRowid,             /* xRowid - read data */
+  0,                         /* xUpdate */
+  0,                         /* xBegin */
+  0,                         /* xSync */
+  0,                         /* xCommit */
+  0,                         /* xRollback */
+  0,                         /* xFindMethod */
+  0,                         /* xRename */
+  0,                         /* xSavepoint */
+  0,                         /* xRelease */
+  0,                         /* xRollbackTo */
+  0,                         /* xShadowName */
+  0                          /* xIntegrity */
+};
+#endif /* SQLITE_OMIT_VIRTUALTABLE */
+#endif /* !defined(SQLITE_OMIT_JSON) */
+
+/*
+** Register JSON functions.
+*/
+SQLITE_PRIVATE void sqlite3RegisterJsonFunctions(void){
+#ifndef SQLITE_OMIT_JSON
+  static FuncDef aJsonFunc[] = {
+    /*   sqlite3_result_subtype() ----,  ,--- sqlite3_value_subtype()       */
+    /*                                |  |                                  */
+    /*             Uses cache ------, |  | ,---- Returns JSONB              */
+    /*                              | |  | |                                */
+    /*     Number of arguments ---, | |  | | ,--- Flags                     */
+    /*                            | | |  | | |                              */
+    JFUNCTION(json,               1,1,1, 0,0,0,          jsonRemoveFunc),
+    JFUNCTION(jsonb,              1,1,0, 0,1,0,          jsonRemoveFunc),
+    JFUNCTION(json_array,        -1,0,1, 1,0,0,          jsonArrayFunc),
+    JFUNCTION(jsonb_array,       -1,0,1, 1,1,0,          jsonArrayFunc),
+    JFUNCTION(json_array_insert, -1,1,1, 1,0,JSON_AINS,  jsonSetFunc),
+    JFUNCTION(jsonb_array_insert,-1,1,0, 1,1,JSON_AINS,  jsonSetFunc),
+    JFUNCTION(json_array_length,  1,1,0, 0,0,0,          jsonArrayLengthFunc),
+    JFUNCTION(json_array_length,  2,1,0, 0,0,0,          jsonArrayLengthFunc),
+    JFUNCTION(json_error_position,1,1,0, 0,0,0,          jsonErrorFunc),
+    JFUNCTION(json_extract,      -1,1,1, 0,0,0,          jsonExtractFunc),
+    JFUNCTION(jsonb_extract,     -1,1,0, 0,1,0,          jsonExtractFunc),
+    JFUNCTION(->,                 2,1,1, 0,0,JSON_JSON,  jsonExtractFunc),
+    JFUNCTION(->>,                2,1,0, 0,0,JSON_SQL,   jsonExtractFunc),
+    JFUNCTION(json_insert,       -1,1,1, 1,0,0,          jsonSetFunc),
+    JFUNCTION(jsonb_insert,      -1,1,0, 1,1,0,          jsonSetFunc),
+    JFUNCTION(json_object,       -1,0,1, 1,0,0,          jsonObjectFunc),
+    JFUNCTION(jsonb_object,      -1,0,1, 1,1,0,          jsonObjectFunc),
+    JFUNCTION(json_patch,         2,1,1, 0,0,0,          jsonPatchFunc),
+    JFUNCTION(jsonb_patch,        2,1,0, 0,1,0,          jsonPatchFunc),
+    JFUNCTION(json_pretty,        1,1,0, 0,0,0,          jsonPrettyFunc),
+    JFUNCTION(json_pretty,        2,1,0, 0,0,0,          jsonPrettyFunc),
+    JFUNCTION(json_quote,         1,0,1, 1,0,0,          jsonQuoteFunc),
+    JFUNCTION(json_remove,       -1,1,1, 0,0,0,          jsonRemoveFunc),
+    JFUNCTION(jsonb_remove,      -1,1,0, 0,1,0,          jsonRemoveFunc),
+    JFUNCTION(json_replace,      -1,1,1, 1,0,0,          jsonReplaceFunc),
+    JFUNCTION(jsonb_replace,     -1,1,0, 1,1,0,          jsonReplaceFunc),
+    JFUNCTION(json_set,          -1,1,1, 1,0,JSON_ISSET, jsonSetFunc),
+    JFUNCTION(jsonb_set,         -1,1,0, 1,1,JSON_ISSET, jsonSetFunc),
+    JFUNCTION(json_type,          1,1,0, 0,0,0,          jsonTypeFunc),
+    JFUNCTION(json_type,          2,1,0, 0,0,0,          jsonTypeFunc),
+    JFUNCTION(json_valid,         1,1,0, 0,0,0,          jsonValidFunc),
+    JFUNCTION(json_valid,         2,1,0, 0,0,0,          jsonValidFunc),
+#if SQLITE_DEBUG
+    JFUNCTION(json_parse,         1,1,0, 0,0,0,          jsonParseFunc),
+#endif
+    WAGGREGATE(json_group_array,  1, 0, 0,
+       jsonArrayStep, jsonArrayFinal, jsonArrayValue, jsonGroupInverse,
+       SQLITE_SUBTYPE|SQLITE_RESULT_SUBTYPE|SQLITE_UTF8|
+       SQLITE_DETERMINISTIC),
+    WAGGREGATE(jsonb_group_array, 1, JSON_BLOB, 0,
+       jsonArrayStep, jsonArrayFinal, jsonArrayValue, jsonGroupInverse,
+       SQLITE_SUBTYPE|SQLITE_RESULT_SUBTYPE|SQLITE_UTF8|SQLITE_DETERMINISTIC),
+    WAGGREGATE(json_group_object, 2, 0, 0,
+       jsonObjectStep, jsonObjectFinal, jsonObjectValue, jsonGroupInverse,
+       SQLITE_SUBTYPE|SQLITE_RESULT_SUBTYPE|SQLITE_UTF8|SQLITE_DETERMINISTIC),
+    WAGGREGATE(jsonb_group_object,2, JSON_BLOB, 0,
+       jsonObjectStep, jsonObjectFinal, jsonObjectValue, jsonGroupInverse,
+       SQLITE_SUBTYPE|SQLITE_RESULT_SUBTYPE|SQLITE_UTF8|
+       SQLITE_DETERMINISTIC)
+  };
+  sqlite3InsertBuiltinFuncs(aJsonFunc, ArraySize(aJsonFunc));
+#endif
+}
+
+#if  !defined(SQLITE_OMIT_VIRTUALTABLE) && !defined(SQLITE_OMIT_JSON)
+/*
+** Register the JSON table-valued function named zName and return a
+** pointer to its Module object.  Return NULL if something goes wrong.
+*/
+SQLITE_PRIVATE Module *sqlite3JsonVtabRegister(sqlite3 *db, const char *zName){
+  unsigned int i;
+  static const char *azModule[] = {
+    "json_each", "json_tree", "jsonb_each", "jsonb_tree"
+  };
+  assert( sqlite3HashFind(&db->aModule, zName)==0 );
+  for(i=0; i<sizeof(azModule)/sizeof(azModule[0]); i++){
+    if( sqlite3StrICmp(azModule[i],zName)==0 ){
+      return sqlite3VtabCreateModule(db, azModule[i], &jsonEachModule, 0, 0);
+    }
+  }
+  return 0;
+}
+#endif /* !defined(SQLITE_OMIT_VIRTUALTABLE) && !defined(SQLITE_OMIT_JSON) */
+
+/************** End of json.c ************************************************/
+/************** Begin file rtree.c *******************************************/
+/*
+** 2001 September 15
+**
+** The author disclaims copyright to this source code.  In place of
+** a legal notice, here is a blessing:
+**
+**    May you do good and not evil.
+**    May you find forgiveness for yourself and forgive others.
+**    May you share freely, never taking more than you give.
+**
+*************************************************************************
+** This file contains code for implementations of the r-tree and r*-tree
+** algorithms packaged as an SQLite virtual table module.
+*/
+
+/*
+** Database Format of R-Tree Tables
+** --------------------------------
+**
+** The data structure for a single virtual r-tree table is stored in three
+** native SQLite tables declared as follows. In each case, the '%' character
+** in the table name is replaced with the user-supplied name of the r-tree
+** table.
+**
+**   CREATE TABLE %_node(nodeno INTEGER PRIMARY KEY, data BLOB)
+**   CREATE TABLE %_parent(nodeno INTEGER PRIMARY KEY, parentnode INTEGER)
+**   CREATE TABLE %_rowid(rowid INTEGER PRIMARY KEY, nodeno INTEGER, ...)
+**
+** The data for each node of the r-tree structure is stored in the %_node
+** table. For each node that is not the root node of the r-tree, there is
+** an entry in the %_parent table associating the node with its parent.
+** And for each row of data in the table, there is an entry in the %_rowid
+** table that maps from the entries rowid to the id of the node that it
+** is stored on.  If the r-tree contains auxiliary columns, those are stored
+** on the end of the %_rowid table.
+**
+** The root node of an r-tree always exists, even if the r-tree table is
+** empty. The nodeno of the root node is always 1. All other nodes in the
+** table must be the same size as the root node. The content of each node
+** is formatted as follows:
+**
+**   1. If the node is the root node (node 1), then the first 2 bytes
+**      of the node contain the tree depth as a big-endian integer.
+**      For non-root nodes, the first 2 bytes are left unused.
+**
+**   2. The next 2 bytes contain the number of entries currently
+**      stored in the node.
+**
+**   3. The remainder of the node contains the node entries. Each entry
+**      consists of a single 8-byte integer followed by an even number
+**      of 4-byte coordinates. For leaf nodes the integer is the rowid
+**      of a record. For internal nodes it is the node number of a
+**      child page.
+*/
+
+#if !defined(SQLITE_CORE) \
+  || (defined(SQLITE_ENABLE_RTREE) && !defined(SQLITE_OMIT_VIRTUALTABLE))
+
+#ifndef SQLITE_CORE
+/*   #include "sqlite3ext.h" */
+  SQLITE_EXTENSION_INIT1
+#else
+/*   #include "sqlite3.h" */
+#endif
+SQLITE_PRIVATE sqlite3_int64 sqlite3GetToken(const unsigned char*,int*); /* In SQLite core */
+
+/* #include <stddef.h> */
+
+/*
+** If building separately, we will need some setup that is normally
+** found in sqliteInt.h
+*/
+#if !defined(SQLITE_AMALGAMATION)
+#include "sqlite3rtree.h"
+typedef sqlite3_int64 i64;
+typedef sqlite3_uint64 u64;
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+#if !defined(NDEBUG) && !defined(SQLITE_DEBUG)
+# define NDEBUG 1
+#endif
+#if defined(NDEBUG) && defined(SQLITE_DEBUG)
+# undef NDEBUG
+#endif
+#if defined(SQLITE_COVERAGE_TEST) || defined(SQLITE_MUTATION_TEST)
+# define SQLITE_OMIT_AUXILIARY_SAFETY_CHECKS 1
+#endif
+#if defined(SQLITE_OMIT_AUXILIARY_SAFETY_CHECKS)
+# define ALWAYS(X)      (1)
+# define NEVER(X)       (0)
+#elif !defined(NDEBUG)
+# define ALWAYS(X)      ((X)?1:(assert(0),0))
+# define NEVER(X)       ((X)?(assert(0),1):0)
+#else
+# define ALWAYS(X)      (X)
+# define NEVER(X)       (X)
+#endif
+#ifndef offsetof
+# define offsetof(ST,M) ((size_t)((char*)&((ST*)0)->M - (char*)0))
+#endif
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L)
+# define FLEXARRAY
+#else
+# define FLEXARRAY 1
+#endif
+#endif /* !defined(SQLITE_AMALGAMATION) */
+
+/* Macro to check for 4-byte alignment.  Only used inside of assert() */
+#ifdef SQLITE_DEBUG
+# define FOUR_BYTE_ALIGNED(X)  ((((char*)(X) - (char*)0) & 3)==0)
+#endif
+
+/* #include <string.h> */
+/* #include <stdio.h> */
+/* #include <assert.h> */
+/* #include <stdlib.h> */
+
+/*  The following macro is used to suppress compiler warnings.
+*/
+#ifndef UNUSED_PARAMETER
+# define UNUSED_PARAMETER(x) (void)(x)
+#endif
+
+typedef struct Rtree Rtree;
+typedef struct RtreeCursor RtreeCursor;
+typedef struct RtreeNode RtreeNode;
+typedef struct RtreeCell RtreeCell;
+typedef struct RtreeConstraint RtreeConstraint;
+typedef struct RtreeMatchArg RtreeMatchArg;
+typedef struct RtreeGeomCallback RtreeGeomCallback;
+typedef union RtreeCoord RtreeCoord;
+typedef struct RtreeSearchPoint RtreeSearchPoint;
+
+/* The rtree may have between 1 and RTREE_MAX_DIMENSIONS dimensions. */
+#define RTREE_MAX_DIMENSIONS 5
+
+/* Maximum number of auxiliary columns */
+#define RTREE_MAX_AUX_COLUMN 100
+
+/* Size of hash table Rtree.aHash. This hash table is not expected to
+** ever contain very many entries, so a fixed number of buckets is
+** used.
+*/
+#define HASHSIZE 97
+
+/* The xBestIndex method of this virtual table requires an estimate of
+** the number of rows in the virtual table to calculate the costs of
+** various strategies. If possible, this estimate is loaded from the
+** sqlite_stat1 table (with RTREE_MIN_ROWEST as a hard-coded minimum).
+** Otherwise, if no sqlite_stat1 entry is available, use
+** RTREE_DEFAULT_ROWEST.
+*/
+#define RTREE_DEFAULT_ROWEST 1048576
+#define RTREE_MIN_ROWEST         100
+
+/*
+** An rtree virtual-table object.
+*/
+struct Rtree {
+  sqlite3_vtab base;          /* Base class.  Must be first */
+  sqlite3 *db;                /* Host database connection */
+  int iNodeSize;              /* Size in bytes of each node in the node table */
+  u8 nDim;                    /* Number of dimensions */
+  u8 nDim2;                   /* Twice the number of dimensions */
+  u8 eCoordType;              /* RTREE_COORD_REAL32 or RTREE_COORD_INT32 */
+  u8 nBytesPerCell;           /* Bytes consumed per cell */
+  u8 inWrTrans;               /* True if inside write transaction */
+  u16 nAux;                   /* # of auxiliary columns in %_rowid */
+#ifdef SQLITE_ENABLE_GEOPOLY
+  u8 nAuxNotNull;             /* Number of initial not-null aux columns */
+#endif
+#ifdef SQLITE_DEBUG
+  u8 bCorrupt;                /* Shadow table corruption detected */
+#endif
+  int iDepth;                 /* Current depth of the r-tree structure */
+  char *zDb;                  /* Name of database containing r-tree table */
+  char *zName;                /* Name of r-tree table */
+  char *zNodeName;            /* Name of the %_node table */
+  u32 nBusy;                  /* Current number of users of this structure */
+  i64 nRowEst;                /* Estimated number of rows in this table */
+  u32 nCursor;                /* Number of open cursors */
+  u32 nNodeRef;               /* Number RtreeNodes with positive nRef */
+  char *zReadAuxSql;          /* SQL for statement to read aux data */
+
+  /* List of nodes removed during a CondenseTree operation. List is
+  ** linked together via the pointer normally used for hash chains -
+  ** RtreeNode.pNext. RtreeNode.iNode stores the depth of the sub-tree
+  ** headed by the node (leaf nodes have RtreeNode.iNode==0).
+  */
+  RtreeNode *pDeleted;
+
+  /* Blob I/O on xxx_node */
+  sqlite3_blob *pNodeBlob;
+
+  /* Statements to read/write/delete a record from xxx_node */
+  sqlite3_stmt *pWriteNode;
+  sqlite3_stmt *pDeleteNode;
+
+  /* Statements to read/write/delete a record from xxx_rowid */
+  sqlite3_stmt *pReadRowid;
+  sqlite3_stmt *pWriteRowid;
+  sqlite3_stmt *pDeleteRowid;
+
+  /* Statements to read/write/delete a record from xxx_parent */
+  sqlite3_stmt *pReadParent;
+  sqlite3_stmt *pWriteParent;
+  sqlite3_stmt *pDeleteParent;
+
+  /* Statement for writing to the "aux:" fields, if there are any */
+  sqlite3_stmt *pWriteAux;
+
+  RtreeNode *aHash[HASHSIZE]; /* Hash table of in-memory nodes. */
+};
+
+/* Possible values for Rtree.eCoordType: */
+#define RTREE_COORD_REAL32 0
+#define RTREE_COORD_INT32  1
+
+/*
+** If SQLITE_RTREE_INT_ONLY is defined, then this virtual table will
+** only deal with integer coordinates.  No floating point operations
+** will be done.
+*/
+#ifdef SQLITE_RTREE_INT_ONLY
+  typedef sqlite3_int64 RtreeDValue;       /* High accuracy coordinate */
+  typedef int RtreeValue;                  /* Low accuracy coordinate */
+# define RTREE_ZERO 0
+#else
+  typedef double RtreeDValue;              /* High accuracy coordinate */
+  typedef float RtreeValue;                /* Low accuracy coordinate */
+# define RTREE_ZERO 0.0
+#endif
+
+/*
+** Set the Rtree.bCorrupt flag
+*/
+#ifdef SQLITE_DEBUG
+# define RTREE_IS_CORRUPT(X) ((X)->bCorrupt = 1)
+#else
+# define RTREE_IS_CORRUPT(X)
+#endif
+
+/*
+** When doing a search of an r-tree, instances of the following structure
+** record intermediate results from the tree walk.
+**
+** The id is always a node-id.  For iLevel>=1 the id is the node-id of
+** the node that the RtreeSearchPoint represents.  When iLevel==0, however,
+** the id is of the parent node and the cell that RtreeSearchPoint
+** represents is the iCell-th entry in the parent node.
+*/
+struct RtreeSearchPoint {
+  RtreeDValue rScore;    /* The score for this node.  Smallest goes first. */
+  sqlite3_int64 id;      /* Node ID */
+  u8 iLevel;             /* 0=entries.  1=leaf node.  2+ for higher */
+  u8 eWithin;            /* PARTLY_WITHIN or FULLY_WITHIN */
+  u8 iCell;              /* Cell index within the node */
+};
+
+/*
+** The minimum number of cells allowed for a node is a third of the
+** maximum. In Gutman's notation:
+**
+**     m = M/3
+**
+** If an R*-tree "Reinsert" operation is required, the same number of
+** cells are removed from the overfull node and reinserted into the tree.
+*/
+#define RTREE_MINCELLS(p) ((((p)->iNodeSize-4)/(p)->nBytesPerCell)/3)
+#define RTREE_REINSERT(p) RTREE_MINCELLS(p)
+#define RTREE_MAXCELLS 51
+
+/*
+** The smallest possible node-size is (512-64)==448 bytes. And the largest
+** supported cell size is 48 bytes (8 byte rowid + ten 4 byte coordinates).
+** Therefore all non-root nodes must contain at least 3 entries. Since
+** 3^40 is greater than 2^64, an r-tree structure always has a depth of
+** 40 or less.
+*/
+#define RTREE_MAX_DEPTH 40
+
+
+/*
+** Number of entries in the cursor RtreeNode cache.  The first entry is
+** used to cache the RtreeNode for RtreeCursor.sPoint.  The remaining
+** entries cache the RtreeNode for the first elements of the priority queue.
+*/
+#define RTREE_CACHE_SZ  5
+
+/*
+** An rtree cursor object.
+*/
+struct RtreeCursor {
+  sqlite3_vtab_cursor base;         /* Base class.  Must be first */
+  u8 atEOF;                         /* True if at end of search */
+  u8 bPoint;                        /* True if sPoint is valid */
+  u8 bAuxValid;                     /* True if pReadAux is valid */
+  int iStrategy;                    /* Copy of idxNum search parameter */
+  int nConstraint;                  /* Number of entries in aConstraint */
+  RtreeConstraint *aConstraint;     /* Search constraints. */
+  int nPointAlloc;                  /* Number of slots allocated for aPoint[] */
+  int nPoint;                       /* Number of slots used in aPoint[] */
+  int mxLevel;                      /* iLevel value for root of the tree */
+  RtreeSearchPoint *aPoint;         /* Priority queue for search points */
+  sqlite3_stmt *pReadAux;           /* Statement to read aux-data */
+  RtreeSearchPoint sPoint;          /* Cached next search point */
+  RtreeNode *aNode[RTREE_CACHE_SZ]; /* Rtree node cache */
+  u32 anQueue[RTREE_MAX_DEPTH+2];   /* Number of queued entries by iLevel */
+};
+
+/* Return the Rtree of a RtreeCursor */
+#define RTREE_OF_CURSOR(X)   ((Rtree*)((X)->base.pVtab))
+
+/*
+** A coordinate can be either a floating point number or a integer.  All
+** coordinates within a single R-Tree are always of the same time.
+*/
+union RtreeCoord {
+  RtreeValue f;      /* Floating point value */
+  int i;             /* Integer value */
+  u32 u;             /* Unsigned for byte-order conversions */
+};
+
+/*
+** The argument is an RtreeCoord. Return the value stored within the RtreeCoord
+** formatted as a RtreeDValue (double or int64). This macro assumes that local
+** variable pRtree points to the Rtree structure associated with the
+** RtreeCoord.
+*/
+#ifdef SQLITE_RTREE_INT_ONLY
+# define DCOORD(coord) ((RtreeDValue)coord.i)
+#else
+# define DCOORD(coord) (                           \
+    (pRtree->eCoordType==RTREE_COORD_REAL32) ?      \
+      ((double)coord.f) :                           \
+      ((double)coord.i)                             \
+  )
+#endif
+
+/*
+** A search constraint.
+*/
+struct RtreeConstraint {
+  int iCoord;                     /* Index of constrained coordinate */
+  int op;                         /* Constraining operation */
+  union {
+    RtreeDValue rValue;             /* Constraint value. */
+    int (*xGeom)(sqlite3_rtree_geometry*,int,RtreeDValue*,int*);
+    int (*xQueryFunc)(sqlite3_rtree_query_info*);
+  } u;
+  sqlite3_rtree_query_info *pInfo;  /* xGeom and xQueryFunc argument */
+};
+
+/* Possible values for RtreeConstraint.op */
+#define RTREE_EQ    0x41  /* A */
+#define RTREE_LE    0x42  /* B */
+#define RTREE_LT    0x43  /* C */
+#define RTREE_GE    0x44  /* D */
+#define RTREE_GT    0x45  /* E */
+#define RTREE_MATCH 0x46  /* F: Old-style sqlite3_rtree_geometry_callback() */
+#define RTREE_QUERY 0x47  /* G: New-style sqlite3_rtree_query_callback() */
+
+/* Special operators available only on cursors.  Needs to be consecutive
+** with the normal values above, but must be less than RTREE_MATCH.  These
+** are used in the cursor for contraints such as x=NULL (RTREE_FALSE) or
+** x<'xyz' (RTREE_TRUE) */
+#define RTREE_TRUE  0x3f  /* ? */
+#define RTREE_FALSE 0x40  /* @ */
+
+/*
+** An rtree structure node.
+*/
+struct RtreeNode {
+  RtreeNode *pParent;         /* Parent node */
+  i64 iNode;                  /* The node number */
+  int nRef;                   /* Number of references to this node */
+  int isDirty;                /* True if the node needs to be written to disk */
+  u8 *zData;                  /* Content of the node, as should be on disk */
+  RtreeNode *pNext;           /* Next node in this hash collision chain */
+};
+
+/* Return the number of cells in a node  */
+#define NCELL(pNode) readInt16(&(pNode)->zData[2])
+
+/*
+** A single cell from a node, deserialized
+*/
+struct RtreeCell {
+  i64 iRowid;                                 /* Node or entry ID */
+  RtreeCoord aCoord[RTREE_MAX_DIMENSIONS*2];  /* Bounding box coordinates */
+};
+
+
+/*
+** This object becomes the sqlite3_user_data() for the SQL functions
+** that are created by sqlite3_rtree_geometry_callback() and
+** sqlite3_rtree_query_callback() and which appear on the right of MATCH
+** operators in order to constrain a search.
+**
+** xGeom and xQueryFunc are the callback functions.  Exactly one of
+** xGeom and xQueryFunc fields is non-NULL, depending on whether the
+** SQL function was created using sqlite3_rtree_geometry_callback() or
+** sqlite3_rtree_query_callback().
+**
+** This object is deleted automatically by the destructor mechanism in
+** sqlite3_create_function_v2().
+*/
+struct RtreeGeomCallback {
+  int (*xGeom)(sqlite3_rtree_geometry*, int, RtreeDValue*, int*);
+  int (*xQueryFunc)(sqlite3_rtree_query_info*);
+  void (*xDestructor)(void*);
+  void *pContext;
+};
+
+/*
+** An instance of this structure (in the form of a BLOB) is returned by
+** the SQL functions that sqlite3_rtree_geometry_callback() and
+** sqlite3_rtree_query_callback() create, and is read as the right-hand
+** operand to the MATCH operator of an R-Tree.
+*/
+struct RtreeMatchArg {
+  u32 iSize;                  /* Size of this object */
+  RtreeGeomCallback cb;       /* Info about the callback functions */
+  int nParam;                 /* Number of parameters to the SQL function */
+  sqlite3_value **apSqlParam; /* Original SQL parameter values */
+  RtreeDValue aParam[FLEXARRAY]; /* Values for parameters to the SQL function */
+};
+
+/* Size of an RtreeMatchArg object with N parameters */
+#define SZ_RTREEMATCHARG(N)  \
+        (offsetof(RtreeMatchArg,aParam)+(N)*sizeof(RtreeDValue))
+
+#ifndef MAX
+# define MAX(x,y) ((x) < (y) ? (y) : (x))
+#endif
+#ifndef MIN
+# define MIN(x,y) ((x) > (y) ? (y) : (x))
+#endif
+
+/* What version of GCC is being used.  0 means GCC is not being used .
+** Note that the GCC_VERSION macro will also be set correctly when using
+** clang, since clang works hard to be gcc compatible.  So the gcc
+** optimizations will also work when compiling with clang.
+*/
+#ifndef GCC_VERSION
+#if defined(__GNUC__) && !defined(SQLITE_DISABLE_INTRINSIC)
+# define GCC_VERSION (__GNUC__*1000000+__GNUC_MINOR__*1000+__GNUC_PATCHLEVEL__)
+#else
+# define GCC_VERSION 0
+#endif
+#endif
+
+/* The testcase() macro should already be defined in the amalgamation.  If
+** it is not, make it a no-op.
+*/
+#ifndef SQLITE_AMALGAMATION
+# if defined(SQLITE_COVERAGE_TEST) || defined(SQLITE_DEBUG)
+    unsigned int sqlite3RtreeTestcase = 0;
+#   define testcase(X)  if( X ){ sqlite3RtreeTestcase += __LINE__; }
+# else
+#   define testcase(X)
+# endif
+#endif
+
+/*
+** Make sure that the compiler intrinsics we desire are enabled when
+** compiling with an appropriate version of MSVC unless prevented by
+** the SQLITE_DISABLE_INTRINSIC define.
+*/
+#if !defined(SQLITE_DISABLE_INTRINSIC)
+#  if defined(_MSC_VER) && _MSC_VER>=1400
+#    if !defined(_WIN32_WCE)
+/* #      include <intrin.h> */
+#      pragma intrinsic(_byteswap_ulong)
+#      pragma intrinsic(_byteswap_uint64)
+#    else
+/* #      include <cmnintrin.h> */
+#    endif
+#  endif
+#endif
+
+/*
+** Macros to determine whether the machine is big or little endian,
+** and whether or not that determination is run-time or compile-time.
+**
+** For best performance, an attempt is made to guess at the byte-order
+** using C-preprocessor macros.  If that is unsuccessful, or if
+** -DSQLITE_RUNTIME_BYTEORDER=1 is set, then byte-order is determined
+** at run-time.
+*/
+#ifndef SQLITE_BYTEORDER /* Replicate changes at tag-20230904a */
+# if defined(__BYTE_ORDER__) && __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
+#   define SQLITE_BYTEORDER 4321
+# elif defined(__BYTE_ORDER__) && __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
+#   define SQLITE_BYTEORDER 1234
+# elif defined(__BIG_ENDIAN__) && __BIG_ENDIAN__==1
+#   define SQLITE_BYTEORDER 4321
+# elif defined(i386)    || defined(__i386__)      || defined(_M_IX86) ||    \
+     defined(__x86_64)  || defined(__x86_64__)    || defined(_M_X64)  ||    \
+     defined(_M_AMD64)  || defined(_M_ARM)        || defined(__x86)   ||    \
+     defined(__ARMEL__) || defined(__AARCH64EL__) || defined(_M_ARM64)
+#   define SQLITE_BYTEORDER 1234
+# elif defined(sparc)   || defined(__ARMEB__)     || defined(__AARCH64EB__)
+#   define SQLITE_BYTEORDER 4321
+# else
+#   define SQLITE_BYTEORDER 0
+# endif
+#endif
+
+
+/* What version of MSVC is being used.  0 means MSVC is not being used */
+#ifndef MSVC_VERSION
+#if defined(_MSC_VER) && !defined(SQLITE_DISABLE_INTRINSIC)
+# define MSVC_VERSION _MSC_VER
+#else
+# define MSVC_VERSION 0
+#endif
+#endif
+
+/*
+** Functions to deserialize a 16 bit integer, 32 bit real number and
+** 64 bit integer. The deserialized value is returned.
+*/
+static int readInt16(u8 *p){
+  return (p[0]<<8) + p[1];
+}
+static void readCoord(u8 *p, RtreeCoord *pCoord){
+  assert( FOUR_BYTE_ALIGNED(p) );
+#if SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
+  pCoord->u = _byteswap_ulong(*(u32*)p);
+#elif SQLITE_BYTEORDER==1234 && GCC_VERSION>=4003000
+  pCoord->u = __builtin_bswap32(*(u32*)p);
+#elif SQLITE_BYTEORDER==4321
+  pCoord->u = *(u32*)p;
+#else
+  pCoord->u = (
+    (((u32)p[0]) << 24) +
+    (((u32)p[1]) << 16) +
+    (((u32)p[2]) <<  8) +
+    (((u32)p[3]) <<  0)
+  );
+#endif
+}
+static i64 readInt64(u8 *p){
+#if SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
+  u64 x;
+  memcpy(&x, p, 8);
+  return (i64)_byteswap_uint64(x);
+#elif SQLITE_BYTEORDER==1234 && GCC_VERSION>=4003000
+  u64 x;
+  memcpy(&x, p, 8);
+  return (i64)__builtin_bswap64(x);
+#elif SQLITE_BYTEORDER==4321
+  i64 x;
+  memcpy(&x, p, 8);
+  return x;
+#else
+  return (i64)(
+    (((u64)p[0]) << 56) +
+    (((u64)p[1]) << 48) +
+    (((u64)p[2]) << 40) +
+    (((u64)p[3]) << 32) +
+    (((u64)p[4]) << 24) +
+    (((u64)p[5]) << 16) +
+    (((u64)p[6]) <<  8) +
+    (((u64)p[7]) <<  0)
+  );
+#endif
+}
+
+/*
+** Functions to serialize a 16 bit integer, 32 bit real number and
+** 64 bit integer. The value returned is the number of bytes written
+** to the argument buffer (always 2, 4 and 8 respectively).
+*/
+static void writeInt16(u8 *p, int i){
+  p[0] = (i>> 8)&0xFF;
+  p[1] = (i>> 0)&0xFF;
+}
+static int writeCoord(u8 *p, RtreeCoord *pCoord){
+  u32 i;
+  assert( FOUR_BYTE_ALIGNED(p) );
+  assert( sizeof(RtreeCoord)==4 );
+  assert( sizeof(u32)==4 );
+#if SQLITE_BYTEORDER==1234 && GCC_VERSION>=4003000
+  i = __builtin_bswap32(pCoord->u);
+  memcpy(p, &i, 4);
+#elif SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
+  i = _byteswap_ulong(pCoord->u);
+  memcpy(p, &i, 4);
+#elif SQLITE_BYTEORDER==4321
+  i = pCoord->u;
+  memcpy(p, &i, 4);
+#else
+  i = pCoord->u;
+  p[0] = (i>>24)&0xFF;
+  p[1] = (i>>16)&0xFF;
+  p[2] = (i>> 8)&0xFF;
+  p[3] = (i>> 0)&0xFF;
+#endif
+  return 4;
+}
+static int writeInt64(u8 *p, i64 i){
+#if SQLITE_BYTEORDER==1234 && GCC_VERSION>=4003000
+  i = (i64)__builtin_bswap64((u64)i);
+  memcpy(p, &i, 8);
+#elif SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
+  i = (i64)_byteswap_uint64((u64)i);
+  memcpy(p, &i, 8);
+#elif SQLITE_BYTEORDER==4321
+  memcpy(p, &i, 8);
+#else
+  p[0] = (i>>56)&0xFF;
+  p[1] = (i>>48)&0xFF;
+  p[2] = (i>>40)&0xFF;
+  p[3] = (i>>32)&0xFF;
+  p[4] = (i>>24)&0xFF;
+  p[5] = (i>>16)&0xFF;
+  p[6] = (i>> 8)&0xFF;
+  p[7] = (i>> 0)&0xFF;
+#endif
+  return 8;
+}
+
+/*
+** Increment the reference count of node p.
+*/
+static void nodeReference(RtreeNode *p){
+  if( p ){
+    assert( p->nRef>0 );
+    p->nRef++;
+  }
+}
+
+/*
+** Clear the content of node p (set all bytes to 0x00).
+*/
+static void nodeZero(Rtree *pRtree, RtreeNode *p){
+  memset(&p->zData[2], 0, pRtree->iNodeSize-2);
+  p->isDirty = 1;
+}
+
+/*
+** Given a node number iNode, return the corresponding key to use
+** in the Rtree.aHash table.
+*/
+static unsigned int nodeHash(i64 iNode){
+  return ((unsigned)iNode) % HASHSIZE;
+}
+
+/*
+** Search the node hash table for node iNode. If found, return a pointer
+** to it. Otherwise, return 0.
+*/
+static RtreeNode *nodeHashLookup(Rtree *pRtree, i64 iNode){
+  RtreeNode *p;
+  for(p=pRtree->aHash[nodeHash(iNode)]; p && p->iNode!=iNode; p=p->pNext);
+  return p;
+}
+
+/*
+** Add node pNode to the node hash table.
+*/
+static void nodeHashInsert(Rtree *pRtree, RtreeNode *pNode){
+  int iHash;
+  assert( pNode->pNext==0 );
+  iHash = nodeHash(pNode->iNode);
+  pNode->pNext = pRtree->aHash[iHash];
+  pRtree->aHash[iHash] = pNode;
+}
+
+/*
+** Remove node pNode from the node hash table.
+*/
+static void nodeHashDelete(Rtree *pRtree, RtreeNode *pNode){
+  RtreeNode **pp;
+  if( pNode->iNode!=0 ){
+    pp = &pRtree->aHash[nodeHash(pNode->iNode)];
+    for( ; (*pp)!=pNode; pp = &(*pp)->pNext){ assert(*pp); }
+    *pp = pNode->pNext;
+    pNode->pNext = 0;
+  }
+}
+
+/*
+** Allocate and return new r-tree node. Initially, (RtreeNode.iNode==0),
+** indicating that node has not yet been assigned a node number. It is
+** assigned a node number when nodeWrite() is called to write the
+** node contents out to the database.
+*/
+static RtreeNode *nodeNew(Rtree *pRtree, RtreeNode *pParent){
+  RtreeNode *pNode;
+  pNode = (RtreeNode *)sqlite3_malloc64(sizeof(RtreeNode) + pRtree->iNodeSize);
+  if( pNode ){
+    memset(pNode, 0, sizeof(RtreeNode) + pRtree->iNodeSize);
+    pNode->zData = (u8 *)&pNode[1];
+    pNode->nRef = 1;
+    pRtree->nNodeRef++;
+    pNode->pParent = pParent;
+    pNode->isDirty = 1;
+    nodeReference(pParent);
+  }
+  return pNode;
+}
+
+/*
+** Clear the Rtree.pNodeBlob object
+*/
+static void nodeBlobReset(Rtree *pRtree){
+  sqlite3_blob *pBlob = pRtree->pNodeBlob;
+  pRtree->pNodeBlob = 0;
+  sqlite3_blob_close(pBlob);
+}
+
+/*
+** Obtain a reference to an r-tree node.
+*/
+static int nodeAcquire(
+  Rtree *pRtree,             /* R-tree structure */
+  i64 iNode,                 /* Node number to load */
+  RtreeNode *pParent,        /* Either the parent node or NULL */
+  RtreeNode **ppNode         /* OUT: Acquired node */
+){
+  int rc = SQLITE_OK;
+  RtreeNode *pNode = 0;
+
+  /* Check if the requested node is already in the hash table. If so,
+  ** increase its reference count and return it.
+  */
+  if( (pNode = nodeHashLookup(pRtree, iNode))!=0 ){
+    if( pParent && ALWAYS(pParent!=pNode->pParent) ){
+      RTREE_IS_CORRUPT(pRtree);
+      return SQLITE_CORRUPT_VTAB;
+    }
+    pNode->nRef++;
+    *ppNode = pNode;
+    return SQLITE_OK;
+  }
+
+  if( pRtree->pNodeBlob ){
+    sqlite3_blob *pBlob = pRtree->pNodeBlob;
+    pRtree->pNodeBlob = 0;
+    rc = sqlite3_blob_reopen(pBlob, iNode);
+    pRtree->pNodeBlob = pBlob;
+    if( rc ){
+      nodeBlobReset(pRtree);
+      if( rc==SQLITE_NOMEM ) return SQLITE_NOMEM;
+    }
+  }
+  if( pRtree->pNodeBlob==0 ){
+    rc = sqlite3_blob_open(pRtree->db, pRtree->zDb, pRtree->zNodeName,
+                           "data", iNode, 0,
+                           &pRtree->pNodeBlob);
+  }
+  if( rc ){
+    *ppNode = 0;
+    /* If unable to open an sqlite3_blob on the desired row, that can only
+    ** be because the shadow tables hold erroneous data. */
+    if( rc==SQLITE_ERROR ){
+      rc = SQLITE_CORRUPT_VTAB;
+      RTREE_IS_CORRUPT(pRtree);
+    }
+  }else if( iNode<=0 ){
+    RTREE_IS_CORRUPT(pRtree);
+    rc = SQLITE_CORRUPT_VTAB;
+  }else if( pRtree->iNodeSize==sqlite3_blob_bytes(pRtree->pNodeBlob) ){
+    pNode = (RtreeNode *)sqlite3_malloc64(sizeof(RtreeNode)+pRtree->iNodeSize);
+    if( !pNode ){
+      rc = SQLITE_NOMEM;
+    }else{
+      pNode->pParent = pParent;
+      pNode->zData = (u8 *)&pNode[1];
+      pNode->nRef = 1;
+      pRtree->nNodeRef++;
+      pNode->iNode = iNode;
+      pNode->isDirty = 0;
+      pNode->pNext = 0;
+      rc = sqlite3_blob_read(pRtree->pNodeBlob, pNode->zData,
+                             pRtree->iNodeSize, 0);
+    }
+  }
+
+  /* If the root node was just loaded, set pRtree->iDepth to the height
+  ** of the r-tree structure. A height of zero means all data is stored on
+  ** the root node. A height of one means the children of the root node
+  ** are the leaves, and so on. If the depth as specified on the root node
+  ** is greater than RTREE_MAX_DEPTH, the r-tree structure must be corrupt.
+  */
+  if( rc==SQLITE_OK && pNode && iNode==1 ){
+    pRtree->iDepth = readInt16(pNode->zData);
+    if( pRtree->iDepth>=RTREE_MAX_DEPTH ){
+      rc = SQLITE_CORRUPT_VTAB;
+      RTREE_IS_CORRUPT(pRtree);
+    }
+  }
+
+  /* If no error has occurred so far, check if the "number of entries"
+  ** field on the node is too large. If so, set the return code to
+  ** SQLITE_CORRUPT_VTAB.
+  */
+  if( pNode && rc==SQLITE_OK ){
+    if( NCELL(pNode)>((pRtree->iNodeSize-4)/pRtree->nBytesPerCell) ){
+      rc = SQLITE_CORRUPT_VTAB;
+      RTREE_IS_CORRUPT(pRtree);
+    }
+  }
+
+  if( rc==SQLITE_OK ){
+    if( pNode!=0 ){
+      nodeReference(pParent);
+      nodeHashInsert(pRtree, pNode);
+    }else{
+      rc = SQLITE_CORRUPT_VTAB;
+      RTREE_IS_CORRUPT(pRtree);
+    }
+    *ppNode = pNode;
+  }else{
+    nodeBlobReset(pRtree);
+    if( pNode ){
+      pRtree->nNodeRef--;
+      sqlite3_free(pNode);
+    }
+    *ppNode = 0;
+  }
+
+  return rc;
+}
+
+/*
+** Overwrite cell iCell of node pNode with the contents of pCell.
+*/
+static void nodeOverwriteCell(
+  Rtree *pRtree,             /* The overall R-Tree */
+  RtreeNode *pNode,          /* The node into which the cell is to be written */
+  RtreeCell *pCell,          /* The cell to write */
+  int iCell                  /* Index into pNode into which pCell is written */
+){
+  int ii;
+  u8 *p = &pNode->zData[4 + pRtree->nBytesPerCell*iCell];
+  p += writeInt64(p, pCell->iRowid);
+  for(ii=0; ii<pRtree->nDim2; ii++){
+    p += writeCoord(p, &pCell->aCoord[ii]);
+  }
+  pNode->isDirty = 1;
+}
+
+/*
+** Remove the cell with index iCell from node pNode.
+*/
+static void nodeDeleteCell(Rtree *pRtree, RtreeNode *pNode, int iCell){
+  u8 *pDst = &pNode->zData[4 + pRtree->nBytesPerCell*iCell];
+  u8 *pSrc = &pDst[pRtree->nBytesPerCell];
+  int nByte = (NCELL(pNode) - iCell - 1) * pRtree->nBytesPerCell;
+  memmove(pDst, pSrc, nByte);
+  writeInt16(&pNode->zData[2], NCELL(pNode)-1);
+  pNode->isDirty = 1;
+}
+
+/*
+** Insert the contents of cell pCell into node pNode. If the insert
+** is successful, return SQLITE_OK.
+**
+** If there is not enough free space in pNode, return SQLITE_FULL.
+*/
+static int nodeInsertCell(
+  Rtree *pRtree,                /* The overall R-Tree */
+  RtreeNode *pNode,             /* Write new cell into this node */
+  RtreeCell *pCell              /* The cell to be inserted */
+){
+  int nCell;                    /* Current number of cells in pNode */
+  int nMaxCell;                 /* Maximum number of cells for pNode */
+
+  nMaxCell = (pRtree->iNodeSize-4)/pRtree->nBytesPerCell;
+  nCell = NCELL(pNode);
+
+  assert( nCell<=nMaxCell );
+  if( nCell<nMaxCell ){
+    nodeOverwriteCell(pRtree, pNode, pCell, nCell);
+    writeInt16(&pNode->zData[2], nCell+1);
+    pNode->isDirty = 1;
+  }
+
+  return (nCell==nMaxCell);
+}
+
+/*
+** If the node is dirty, write it out to the database.
+*/
+static int nodeWrite(Rtree *pRtree, RtreeNode *pNode){
+  int rc = SQLITE_OK;
+  if( pNode->isDirty ){
+    sqlite3_stmt *p = pRtree->pWriteNode;
+    if( pNode->iNode ){
+      sqlite3_bind_int64(p, 1, pNode->iNode);
+    }else{
+      sqlite3_bind_null(p, 1);
+    }
+    sqlite3_bind_blob(p, 2, pNode->zData, pRtree->iNodeSize, SQLITE_STATIC);
+    sqlite3_step(p);
+    pNode->isDirty = 0;
+    rc = sqlite3_reset(p);
+    sqlite3_bind_null(p, 2);
+    if( pNode->iNode==0 && rc==SQLITE_OK ){
+      pNode->iNode = sqlite3_last_insert_rowid(pRtree->db);
+      nodeHashInsert(pRtree, pNode);
+    }
+  }
+  return rc;
+}
+
+/*
+** Release a reference to a node. If the node is dirty and the reference
+** count drops to zero, the node data is written to the database.
+*/
+static int nodeRelease(Rtree *pRtree, RtreeNode *pNode){
+  int rc = SQLITE_OK;
+  if( pNode ){
+    assert( pNode->nRef>0 );
+    assert( pRtree->nNodeRef>0 );
+    pNode->nRef--;
+    if( pNode->nRef==0 ){
+      pRtree->nNodeRef--;
+      if( pNode->iNode==1 ){
+        pRtree->iDepth = -1;
+      }
+      if( pNode->pParent ){
+        rc = nodeRelease(pRtree, pNode->pParent);
+      }
+      if( rc==SQLITE_OK ){
+        rc = nodeWrite(pRtree, pNode);
+      }
+      nodeHashDelete(pRtree, pNode);
+      sqlite3_free(pNode);
+    }
+  }
+  return rc;
+}
+
+/*
+** Return the 64-bit integer value associated with cell iCell of
+** node pNode. If pNode is a leaf node, this is a rowid. If it is
+** an internal node, then the 64-bit integer is a child page number.
+*/
+static i64 nodeGetRowid(
+  Rtree *pRtree,       /* The overall R-Tree */
+  RtreeNode *pNode,    /* The node from which to extract the ID */
+  int iCell            /* The cell index from which to extract the ID */
+){
+  assert( iCell<NCELL(pNode) );
+  return readInt64(&pNode->zData[4 + pRtree->nBytesPerCell*iCell]);
+}
+
+/*
+** Return coordinate iCoord from cell iCell in node pNode.
+*/
+static void nodeGetCoord(
+  Rtree *pRtree,               /* The overall R-Tree */
+  RtreeNode *pNode,            /* The node from which to extract a coordinate */
+  int iCell,                   /* The index of the cell within the node */
+  int iCoord,                  /* Which coordinate to extract */
+  RtreeCoord *pCoord           /* OUT: Space to write result to */
+){
+  assert( iCell<NCELL(pNode) );
+  readCoord(&pNode->zData[12 + pRtree->nBytesPerCell*iCell + 4*iCoord], pCoord);
+}
+
+/*
+** Deserialize cell iCell of node pNode. Populate the structure pointed
+** to by pCell with the results.
+*/
+static void nodeGetCell(
+  Rtree *pRtree,               /* The overall R-Tree */
+  RtreeNode *pNode,            /* The node containing the cell to be read */
+  int iCell,                   /* Index of the cell within the node */
+  RtreeCell *pCell             /* OUT: Write the cell contents here */
+){
+  u8 *pData;
+  RtreeCoord *pCoord;
+  int ii = 0;
+  pCell->iRowid = nodeGetRowid(pRtree, pNode, iCell);
+  pData = pNode->zData + (12 + pRtree->nBytesPerCell*iCell);
+  pCoord = pCell->aCoord;
+  do{
+    readCoord(pData, &pCoord[ii]);
+    readCoord(pData+4, &pCoord[ii+1]);
+    pData += 8;
+    ii += 2;
+  }while( ii<pRtree->nDim2 );
+}
+
+
+/* Forward declaration for the function that does the work of
+** the virtual table module xCreate() and xConnect() methods.
+*/
+static int rtreeInit(
+  sqlite3 *, void *, int, const char *const*, sqlite3_vtab **, char **, int
+);
+
+/*
+** Rtree virtual table module xCreate method.
+*/
+static int rtreeCreate(
+  sqlite3 *db,
+  void *pAux,
+  int argc, const char *const*argv,
+  sqlite3_vtab **ppVtab,
+  char **pzErr
+){
+  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 1);
+}
+
+/*
+** Rtree virtual table module xConnect method.
+*/
+static int rtreeConnect(
+  sqlite3 *db,
+  void *pAux,
+  int argc, const char *const*argv,
+  sqlite3_vtab **ppVtab,
+  char **pzErr
+){
+  return rtreeInit(db, pAux, argc, argv, ppVtab, pzErr, 0);
+}
+
+/*
+** Increment the r-tree reference count.
+*/
+static void rtreeReference(Rtree *pRtree){
+  pRtree->nBusy++;
+}
+
+/*
+** Decrement the r-tree reference count. When the reference count reaches
+** zero the structure is deleted.
+*/
+static void rtreeRelease(Rtree *pRtree){
+  pRtree->nBusy--;
+  if( pRtree->nBusy==0 ){
+    pRtree->inWrTrans = 0;
+    assert( pRtree->nCursor==0 );
+    nodeBlobReset(pRtree);
+    if( pRtree->nNodeRef ){
+      int i;
+      assert( pRtree->bCorrupt );
+      for(i=0; i<HASHSIZE; i++){
+        while( pRtree->aHash[i] ){
+          RtreeNode *pNext = pRtree->aHash[i]->pNext;
+          sqlite3_free(pRtree->aHash[i]);
+          pRtree->aHash[i] = pNext;
+        }
+      }
+    }
+    sqlite3_finalize(pRtree->pWriteNode);
+    sqlite3_finalize(pRtree->pDeleteNode);
+    sqlite3_finalize(pRtree->pReadRowid);
+    sqlite3_finalize(pRtree->pWriteRowid);
+    sqlite3_finalize(pRtree->pDeleteRowid);
+    sqlite3_finalize(pRtree->pReadParent);
+    sqlite3_finalize(pRtree->pWriteParent);
+    sqlite3_finalize(pRtree->pDeleteParent);
+    sqlite3_finalize(pRtree->pWriteAux);
+    sqlite3_free(pRtree->zReadAuxSql);
+    sqlite3_free(pRtree);
+  }
+}
+
+/*
+** Rtree virtual table module xDisconnect method.
+*/
+static int rtreeDisconnect(sqlite3_vtab *pVtab){
+  rtreeRelease((Rtree *)pVtab);
+  return SQLITE_OK;
+}
+
+/*
+** Rtree virtual table module xDestroy method.
+*/
+static int rtreeDestroy(sqlite3_vtab *pVtab){
+  Rtree *pRtree = (Rtree *)pVtab;
+  int rc;
+  char *zCreate = sqlite3_mprintf(
+    "DROP TABLE '%q'.'%q_node';"
+    "DROP TABLE '%q'.'%q_rowid';"
+    "DROP TABLE '%q'.'%q_parent';",
+    pRtree->zDb, pRtree->zName,
+    pRtree->zDb, pRtree->zName,
+    pRtree->zDb, pRtree->zName
+  );
+  if( !zCreate ){
+    rc = SQLITE_NOMEM;
+  }else{
+    nodeBlobReset(pRtree);
+    rc = sqlite3_exec(pRtree->db, zCreate, 0, 0, 0);
+    sqlite3_free(zCreate);
+  }
+  if( rc==SQLITE_OK ){
+    rtreeRelease(pRtree);
+  }
+
+  return rc;
+}
+
+/*
+** Rtree virtual table module xOpen method.
+*/
+static int rtreeOpen(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
+  int rc = SQLITE_NOMEM;
+  Rtree *pRtree = (Rtree *)pVTab;
+  RtreeCursor *pCsr;
+
+  pCsr = (RtreeCursor *)sqlite3_malloc64(sizeof(RtreeCursor));
+  if( pCsr ){
+    memset(pCsr, 0, sizeof(RtreeCursor));
+    pCsr->base.pVtab = pVTab;
+    rc = SQLITE_OK;
+    pRtree->nCursor++;
+  }
+  *ppCursor = (sqlite3_vtab_cursor *)pCsr;
+
+  return rc;
+}
+
+
+/*
+** Reset a cursor back to its initial state.
+*/
+static void resetCursor(RtreeCursor *pCsr){
+  Rtree *pRtree = (Rtree *)(pCsr->base.pVtab);
+  int ii;
+  sqlite3_stmt *pStmt;
+  if( pCsr->aConstraint ){
+    int i;                        /* Used to iterate through constraint array */
+    for(i=0; i<pCsr->nConstraint; i++){
+      sqlite3_rtree_query_info *pInfo = pCsr->aConstraint[i].pInfo;
+      if( pInfo ){
+        if( pInfo->xDelUser ) pInfo->xDelUser(pInfo->pUser);
+        sqlite3_free(pInfo);
+      }
+    }
+    sqlite3_free(pCsr->aConstraint);
+    pCsr->aConstraint = 0;
+  }
+  for(ii=0; ii<RTREE_CACHE_SZ; ii++) nodeRelease(pRtree, pCsr->aNode[ii]);
+  sqlite3_free(pCsr->aPoint);
+  pStmt = pCsr->pReadAux;
+  memset(pCsr, 0, sizeof(RtreeCursor));
+  pCsr->base.pVtab = (sqlite3_vtab*)pRtree;
+  pCsr->pReadAux = pStmt;
+
+  /* The following will only fail if the previous sqlite3_step() call failed,
+  ** in which case the error has already been caught. This statement never
+  ** encounters an error within an sqlite3_column_xxx() function, as it
+  ** calls sqlite3_column_value(), which does not use malloc(). So it is safe
+  ** to ignore the error code here.  */
+  sqlite3_reset(pStmt);
+}
+
+/*
+** Rtree virtual table module xClose method.
+*/
+static int rtreeClose(sqlite3_vtab_cursor *cur){
+  Rtree *pRtree = (Rtree *)(cur->pVtab);
+  RtreeCursor *pCsr = (RtreeCursor *)cur;
+  assert( pRtree->nCursor>0 );
+  resetCursor(pCsr);
+  sqlite3_finalize(pCsr->pReadAux);
+  sqlite3_free(pCsr);
+  pRtree->nCursor--;
+  if( pRtree->nCursor==0 && pRtree->inWrTrans==0 ){
+    nodeBlobReset(pRtree);
+  }
+  return SQLITE_OK;
+}
+
+/*
+** Rtree virtual table module xEof method.
+**
+** Return non-zero if the cursor does not currently point to a valid
+** record (i.e if the scan has finished), or zero otherwise.
+*/
+static int rtreeEof(sqlite3_vtab_cursor *cur){
+  RtreeCursor *pCsr = (RtreeCursor *)cur;
+  return pCsr->atEOF;
+}
+
+/*
+** Convert raw bits from the on-disk RTree record into a coordinate value.
+** The on-disk format is big-endian and needs to be converted for little-
+** endian platforms.  The on-disk record stores integer coordinates if
+** eInt is true and it stores 32-bit floating point records if eInt is
+** false.  a[] is the four bytes of the on-disk record to be decoded.
+** Store the results in "r".
+**
+** There are five versions of this macro.  The last one is generic.  The
+** other four are various architectures-specific optimizations.
+*/
+#if SQLITE_BYTEORDER==1234 && MSVC_VERSION>=1300
+#define RTREE_DECODE_COORD(eInt, a, r) {                        \
+    RtreeCoord c;    /* Coordinate decoded */                   \
+    c.u = _byteswap_ulong(*(u32*)a);                            \
+    r = eInt ? (sqlite3_rtree_dbl)c.i : (sqlite3_rtree_dbl)c.f; \
+}
+#elif SQLITE_BYTEORDER==1234 && GCC_VERSION>=4003000
+#define RTREE_DECODE_COORD(eInt, a, r) {                        \
+    RtreeCoord c;    /* Coordinate decoded */                   \
+    c.u = __builtin_bswap32(*(u32*)a);                          \
+    r = eInt ? (sqlite3_rtree_dbl)c.i : (sqlite3_rtree_dbl)c.f; \
+}
+#elif SQLITE_BYTEORDER==1234
+#define RTREE_DECODE_COORD(eInt, a, r) {                        \
+    RtreeCoord c;    /* Coordinate decoded */                   \
+    memcpy(&c.u,a,4);                                           \
+    c.u = ((c.u>>24)&0xff)|((c.u>>8)&0xff00)|                   \
+          ((c.u&0xff)<<24)|((c.u&0xff00)<<8);                   \
+    r = eInt ? (sqlite3_rtree_dbl)c.i : (sqlite3_rtree_dbl)c.f; \
+}
+#elif SQLITE_BYTEORDER==4321
+#define RTREE_DECODE_COORD(eInt, a, r) {                        \
+    RtreeCoord c;    /* Coordinate decoded */                   \
+    memcpy(&c.u,a,4);                                           \
+    r = eInt ? (sqlite3_rtree_dbl)c.i : (sqlite3_rtree_dbl)c.f; \
+}
+#else
+#define RTREE_DECODE_COORD(eInt, a, r) {                        \
+    RtreeCoord c;    /* Coordinate decoded */                   \
+    c.u = ((u32)a[0]<<24) + ((u32)a[1]<<16)                     \
+           +((u32)a[2]<<8) + a[3];                              \
+    r = eInt ? (sqlite3_rtree_dbl)c.i : (sqlite3_rtree_dbl)c.f; \
+}
+#endif
+
+/*
+** Check the RTree node or entry given by pCellData and p against the MATCH
+** constraint pConstraint.
+*/
+static int rtreeCallbackConstraint(
+  RtreeConstraint *pConstraint,  /* The constraint to test */
+  int eInt,                      /* True if RTree holding integer coordinates */
+  u8 *pCellData,                 /* Raw cell content */
+  RtreeSearchPoint *pSearch,     /* Container of this cell */
+  sqlite3_rtree_dbl *prScore,    /* OUT: score for the cell */
+  int *peWithin                  /* OUT: visibility of the cell */
+){
+  sqlite3_rtree_query_info *pInfo = pConstraint->pInfo; /* Callback info */
+  int nCoord = pInfo->nCoord;                           /* No. of coordinates */
+  int rc;                                             /* Callback return code */
+  RtreeCoord c;                                       /* Translator union */
+  sqlite3_rtree_dbl aCoord[RTREE_MAX_DIMENSIONS*2];   /* Decoded coordinates */
+
+  assert( pConstraint->op==RTREE_MATCH || pConstraint->op==RTREE_QUERY );
+  assert( nCoord==2 || nCoord==4 || nCoord==6 || nCoord==8 || nCoord==10 );
+
+  if( pConstraint->op==RTREE_QUERY && pSearch->iLevel==1 ){
+    pInfo->iRowid = readInt64(pCellData);
+  }
+  pCellData += 8;
+#ifndef SQLITE_RTREE_INT_ONLY
+  if( eInt==0 ){
+    switch( nCoord ){
+      case 10:  readCoord(pCellData+36, &c); aCoord[9] = c.f;
+                readCoord(pCellData+32, &c); aCoord[8] = c.f;
+      case 8:   readCoord(pCellData+28, &c); aCoord[7] = c.f;
+                readCoord(pCellData+24, &c); aCoord[6] = c.f;
+      case 6:   readCoord(pCellData+20, &c); aCoord[5] = c.f;
+                readCoord(pCellData+16, &c); aCoord[4] = c.f;
+      case 4:   readCoord(pCellData+12, &c); aCoord[3] = c.f;
+                readCoord(pCellData+8,  &c); aCoord[2] = c.f;
+      default:  readCoord(pCellData+4,  &c); aCoord[1] = c.f;
+                readCoord(pCellData,    &c); aCoord[0] = c.f;
+    }
+  }else
+#endif
+  {
+    switch( nCoord ){
+      case 10:  readCoord(pCellData+36, &c); aCoord[9] = c.i;
+                readCoord(pCellData+32, &c); aCoord[8] = c.i;
+      case 8:   readCoord(pCellData+28, &c); aCoord[7] = c.i;
+                readCoord(pCellData+24, &c); aCoord[6] = c.i;
+      case 6:   readCoord(pCellData+20, &c); aCoord[5] = c.i;
+                readCoord(pCellData+16, &c); aCoord[4] = c.i;
+      case 4:   readCoord(pCellData+12, &c); aCoord[3] = c.i;
+                readCoord(pCellData+8,  &c); aCoord[2] = c.i;
+      default:  readCoord(pCellData+4,  &c); aCoord[1] = c.i;
+                readCoord(pCellData,    &c); aCoord[0] = c.i;
+    }
+  }
+  if( pConstraint->op==RTREE_MATCH ){
+    int eWithin = 0;
+    rc = pConstraint->u.xGeom((sqlite3_rtree_geometry*)pInfo,
+                              nCoord, aCoord, &eWithin);
+    if( eWithin==0 ) *peWithin = NOT_WITHIN;
+    *prScore = RTREE_ZERO;
+  }else{
+    pInfo->aCoord = aCoord;
+    pInfo->iLevel = pSearch->iLevel - 1;
+    pInfo->rScore = pInfo->rParentScore = pSearch->rScore;
+    pInfo->eWithin = pInfo->eParentWithin = pSearch->eWithin;
+    rc = pConstraint->u.xQueryFunc(pInfo);
+    if( pInfo->eWithin<*peWithin ) *peWithin = pInfo->eWithin;
+    if( pInfo->rScore<*prScore || *prScore<RTREE_ZERO ){
+      *prScore = pInfo->rScore;
+    }
+  }
+  return rc;
+}
+
+/*
+** Check the internal RTree node given by pCellData against constraint p.
+** If this constraint cannot be satisfied by any child within the node,
+** set *peWithin to NOT_WITHIN.
+*/
+static void rtreeNonleafConstraint(
+  RtreeConstraint *p,        /* The constraint to test */
+  int eInt,                  /* True if RTree holds integer coordinates */
+  u8 *pCellData,             /* Raw cell content as appears on disk */
+  int *peWithin              /* Adjust downward, as appropriate */
+){
+  sqlite3_rtree_dbl val;     /* Coordinate value convert to a double */
+
+  /* p->iCoord might point to either a lower or upper bound coordinate
+  ** in a coordinate pair.  But make pCellData point to the lower bound.
+  */
+  pCellData += 8 + 4*(p->iCoord&0xfe);
+
+  assert(p->op==RTREE_LE || p->op==RTREE_LT || p->op==RTREE_GE
+      || p->op==RTREE_GT || p->op==RTREE_EQ || p->op==RTREE_TRUE
+      || p->op==RTREE_FALSE );
+  assert( FOUR_BYTE_ALIGNED(pCellData) );
+  switch( p->op ){
+    case RTREE_TRUE:  return;   /* Always satisfied */
+    case RTREE_FALSE: break;    /* Never satisfied */
+    case RTREE_EQ:
+      RTREE_DECODE_COORD(eInt, pCellData, val);
+      /* val now holds the lower bound of the coordinate pair */
+      if( p->u.rValue>=val ){
+        pCellData += 4;
+        RTREE_DECODE_COORD(eInt, pCellData, val);
+        /* val now holds the upper bound of the coordinate pair */
+        if( p->u.rValue<=val ) return;
+      }
+      break;
+    case RTREE_LE:
+    case RTREE_LT:
+      RTREE_DECODE_COORD(eInt, pCellData, val);
+      /* val now holds the lower bound of the coordinate pair */
+      if( p->u.rValue>=val ) return;
+      break;
+
+    default:
+      pCellData += 4;
+      RTREE_DECODE_COORD(eInt, pCellData, val);
+      /* val now holds the upper bound of the coordinate pair */
+      if( p->u.rValue<=val ) return;
+      break;
+  }
+  *peWithin = NOT_WITHIN;
+}
+
+/*
+** Check the leaf RTree cell given by pCellData against constraint p.
+** If this constraint is not satisfied, set *peWithin to NOT_WITHIN.
+** If the constraint is satisfied, leave *peWithin unchanged.
+**
+** The constraint is of the form:  xN op $val
+**
+** The op is given by p->op.  The xN is p->iCoord-th coordinate in
+** pCellData.  $val is given by p->u.rValue.
+*/
+static void rtreeLeafConstraint(
+  RtreeConstraint *p,        /* The constraint to test */
+  int eInt,                  /* True if RTree holds integer coordinates */
+  u8 *pCellData,             /* Raw cell content as appears on disk */
+  int *peWithin              /* Adjust downward, as appropriate */
+){
+  RtreeDValue xN;      /* Coordinate value converted to a double */
+
+  assert(p->op==RTREE_LE || p->op==RTREE_LT || p->op==RTREE_GE
+      || p->op==RTREE_GT || p->op==RTREE_EQ || p->op==RTREE_TRUE
+      || p->op==RTREE_FALSE );
+  pCellData += 8 + p->iCoord*4;
+  assert( FOUR_BYTE_ALIGNED(pCellData) );
+  RTREE_DECODE_COORD(eInt, pCellData, xN);
+  switch( p->op ){
+    case RTREE_TRUE:  return;   /* Always satisfied */
+    case RTREE_FALSE: break;    /* Never satisfied */
+    case RTREE_LE:    if( xN <= p->u.rValue ) return;  break;
+    case RTREE_LT:    if( xN <  p->u.rValue ) return;  break;
+    case RTREE_GE:    if( xN >= p->u.rValue ) return;  break;
+    case RTREE_GT:    if( xN >  p->u.rValue ) return;  break;
+    default:          if( xN == p->u.rValue ) return;  break;
+  }
+  *peWithin = NOT_WITHIN;
+}
+
+/*
+** One of the cells in node pNode is guaranteed to have a 64-bit
+** integer value equal to iRowid. Return the index of this cell.
+*/
+static int nodeRowidIndex(
+  Rtree *pRtree,
+  RtreeNode *pNode,
+  i64 iRowid,
+  int *piIndex
+){
+  int ii;
+  int nCell = NCELL(pNode);
+  assert( nCell<65536 && nCell>=0 );
+  for(ii=0; ii<nCell; ii++){
+    if( nodeGetRowid(pRtree, pNode, ii)==iRowid ){
+      *piIndex = ii;
+      return SQLITE_OK;
+    }
+  }
+  RTREE_IS_CORRUPT(pRtree);
+  return SQLITE_CORRUPT_VTAB;
+}
+
+/*
+** Return the index of the cell containing a pointer to node pNode
+** in its parent. If pNode is the root node, return -1.
+*/
+static int nodeParentIndex(Rtree *pRtree, RtreeNode *pNode, int *piIndex){
+  RtreeNode *pParent = pNode->pParent;
+  if( ALWAYS(pParent) ){
+    return nodeRowidIndex(pRtree, pParent, pNode->iNode, piIndex);
+  }else{

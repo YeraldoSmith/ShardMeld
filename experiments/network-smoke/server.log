@@ -1,0 +1,2 @@
+starting_chunk_server bind=127.0.0.1:45981 source=experiments/smoke-m/missing max_requests=6
+server_stopped bind=127.0.0.1:45981 connections=2 requests=6 chunks_sent=6 bytes_sent=481581 unavailable=0 connection_errors=0

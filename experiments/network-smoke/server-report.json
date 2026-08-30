@@ -1,0 +1,10 @@
+{
+  "bound_address": "127.0.0.1:45981",
+  "source_directory": "<WORKSPACE>/outputs/ShardMeld/experiments/smoke-m/missing",
+  "connections": 2,
+  "requests_received": 6,
+  "chunks_sent": 6,
+  "bytes_sent": 481581,
+  "unavailable_requests": 0,
+  "connection_errors": 0
+}

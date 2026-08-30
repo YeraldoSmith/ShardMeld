@@ -1,0 +1,38 @@
+{
+  "report_format": "shardmeld-report",
+  "report_version": 1,
+  "engine_version": "2.0.0",
+  "implemented": [
+    "authorized-local-cdc-index",
+    "exact-sha256-reconstruction",
+    "bittorrent-v1-single-file",
+    "http-https-udp-trackers",
+    "multitracker-tiers",
+    "verified-piece-resume",
+    "four-peer-concurrency",
+    "rarest-first",
+    "work-conserving-speed-adaptation",
+    "safe-piece-endgame",
+    "standard-cancel",
+    "magnet-v1-local-metadata-binding",
+    "verified-file-upload-seeding",
+    "on-demand-index-piece-seeding"
+  ],
+  "deferred": [
+    "dht",
+    "magnet-metadata-exchange",
+    "peer-exchange",
+    "bittorrent-v2-hybrid",
+    "multi-file-torrents",
+    "gui"
+  ],
+  "limits": [
+    "explicitly-authorized-index-roots-only",
+    "single-file-v1-torrents-only",
+    "piece-level-resume",
+    "piece-level-endgame",
+    "maximum-four-active-peers",
+    "serial-upload-connections",
+    "manual-upload-tracker-registration"
+  ]
+}

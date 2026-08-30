@@ -1,0 +1,2 @@
+starting_chunk_server bind=127.0.0.1:45983 source=outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/raw-sqlite3-c/m/missing max_requests=15
+server_stopped bind=127.0.0.1:45983 connections=2 requests=15 chunks_sent=15 bytes_sent=1241862 unavailable=0 connection_errors=0

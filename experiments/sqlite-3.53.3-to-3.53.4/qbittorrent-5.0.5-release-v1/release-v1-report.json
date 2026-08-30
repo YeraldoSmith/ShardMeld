@@ -1,0 +1,107 @@
+{
+  "report_format": "shardmeld-report",
+  "report_version": 1,
+  "engine_version": "1.0.0",
+  "tracker": "http://127.0.0.1:45995/announce",
+  "tracker_interval_seconds": 60,
+  "tracker_warning": null,
+  "tracker_attempts": [
+    {
+      "tier": 0,
+      "tracker": "http://127.0.0.1:45995/announce",
+      "peers_returned": 2,
+      "interval_seconds": 60,
+      "error": null
+    }
+  ],
+  "peers_discovered": 2,
+  "peers_attempted": [
+    {
+      "peer": "127.0.0.1:45990",
+      "connected": true,
+      "remote_peer_id_hex": "2d7142353035302d72794765786a357a55515934",
+      "pieces_verified": 6,
+      "verified_piece_indices": [
+        0,
+        8,
+        24,
+        30,
+        32,
+        34
+      ],
+      "block_requests_sent": 54,
+      "payload_bytes_received": 884736,
+      "cancel_messages_sent": 0,
+      "endgame_jobs_cancelled": 1,
+      "active_transfer_micros": 5298,
+      "payload_bytes_per_second": 166994337,
+      "error": null
+    },
+    {
+      "peer": "127.0.0.1:45992",
+      "connected": true,
+      "remote_peer_id_hex": "2d7142353035302d7e7e314c4a53692e302e4152",
+      "pieces_verified": 6,
+      "verified_piece_indices": [
+        4,
+        15,
+        29,
+        31,
+        33,
+        35
+      ],
+      "block_requests_sent": 43,
+      "payload_bytes_received": 704512,
+      "cancel_messages_sent": 0,
+      "endgame_jobs_cancelled": 0,
+      "active_transfer_micros": 5489,
+      "payload_bytes_per_second": 128349790,
+      "error": null
+    }
+  ],
+  "selected_peer": "127.0.0.1:45992",
+  "transfer": {
+    "report_format": "shardmeld-report",
+    "report_version": 1,
+    "engine_version": "1.0.0",
+    "peer": "127.0.0.1:45992",
+    "remote_peer_id_hex": "2d7142353035302d7e7e314c4a53692e302e4152",
+    "remote_reserved_hex": "0000000000180005",
+    "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+    "output": "experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-release-v1/rebuilt-release-v1.bin",
+    "target_bytes": 9515341,
+    "total_pieces": 37,
+    "remote_available_pieces": 37,
+    "fully_local_pieces": 25,
+    "fully_local_piece_bytes": 6369613,
+    "local_bytes_available": 8273479,
+    "genuinely_missing_bytes": 1241862,
+    "remaining_missing_bytes_before_run": 1241862,
+    "request_window": 16,
+    "concurrent_peer_limit": 4,
+    "piece_selection_strategy": "rarest-first",
+    "endgame_enabled": true,
+    "endgame_duplicate_pieces": 1,
+    "endgame_cancelled_jobs": 1,
+    "endgame_cancel_messages": 0,
+    "peer_stall_timeout_seconds": 5,
+    "peers_connected": 2,
+    "contributing_peers": [
+      "127.0.0.1:45990",
+      "127.0.0.1:45992"
+    ],
+    "pieces_reassigned": 0,
+    "resumed_verified_pieces": 0,
+    "resumed_verified_piece_bytes": 0,
+    "network_payload_avoided_by_resume": 0,
+    "newly_verified_pieces": 12,
+    "network_pieces_requested": 12,
+    "network_block_requests": 97,
+    "network_payload_bytes": 1589248,
+    "network_redundant_bytes": 347386,
+    "output_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+    "verified": true
+  },
+  "output": "experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-release-v1/rebuilt-release-v1.bin",
+  "verified": true
+}

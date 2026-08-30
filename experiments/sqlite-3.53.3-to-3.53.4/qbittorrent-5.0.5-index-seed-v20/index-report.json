@@ -1,0 +1,17 @@
+{
+  "source": "<WORKSPACE>/work/qbt-v20-index/materials",
+  "database": "../../work/qbt-v20-index/materials.db",
+  "profile": {
+    "min_size": 16384,
+    "avg_size": 65536,
+    "max_size": 262144
+  },
+  "files_indexed": 136,
+  "bytes_indexed": 9515341,
+  "chunks_indexed": 136,
+  "database_bytes": 151552,
+  "index_overhead_ratio": 0.015927122317529137,
+  "elapsed_ms": 39,
+  "bytes_per_second": 241034808.05463612,
+  "skipped_entries": []
+}

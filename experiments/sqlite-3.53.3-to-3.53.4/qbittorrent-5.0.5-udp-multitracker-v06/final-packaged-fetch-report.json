@@ -1,0 +1,51 @@
+{
+  "tracker": "udp://127.0.0.1:45993/announce",
+  "tracker_interval_seconds": 60,
+  "tracker_warning": null,
+  "tracker_attempts": [
+    {
+      "tier": 0,
+      "tracker": "http://127.0.0.1:45994/announce",
+      "peers_returned": 0,
+      "interval_seconds": null,
+      "error": "HTTP tracker request http://127.0.0.1:45994/announce: io: Connection refused"
+    },
+    {
+      "tier": 1,
+      "tracker": "udp://127.0.0.1:45993/announce",
+      "peers_returned": 1,
+      "interval_seconds": 60,
+      "error": null
+    }
+  ],
+  "peers_discovered": 1,
+  "peers_attempted": [
+    {
+      "peer": "127.0.0.1:45990",
+      "error": null
+    }
+  ],
+  "selected_peer": "127.0.0.1:45990",
+  "transfer": {
+    "peer": "127.0.0.1:45990",
+    "remote_peer_id_hex": "2d7142353035302d46574132615f6a357e4b6264",
+    "remote_reserved_hex": "0000000000180005",
+    "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+    "output": "experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-udp-multitracker-v06/rebuilt-final-packaged-v06.bin",
+    "target_bytes": 9515341,
+    "total_pieces": 37,
+    "remote_available_pieces": 37,
+    "fully_local_pieces": 25,
+    "fully_local_piece_bytes": 6369613,
+    "local_bytes_available": 8273479,
+    "genuinely_missing_bytes": 1241862,
+    "network_pieces_requested": 12,
+    "network_block_requests": 87,
+    "network_payload_bytes": 1425408,
+    "network_redundant_bytes": 183546,
+    "output_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+    "verified": true
+  },
+  "output": "experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-udp-multitracker-v06/rebuilt-final-packaged-v06.bin",
+  "verified": true
+}

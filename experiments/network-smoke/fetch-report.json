@@ -1,0 +1,9 @@
+{
+  "peer": "127.0.0.1:45981",
+  "output_directory": "experiments/network-smoke/fetched",
+  "missing_chunk_occurrences": 6,
+  "unique_chunks_needed": 6,
+  "chunks_fetched": 6,
+  "bytes_fetched": 481581,
+  "existing_verified_chunks": 0
+}

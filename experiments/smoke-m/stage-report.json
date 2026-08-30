@@ -1,0 +1,7 @@
+{
+  "output_directory": "<WORKSPACE>/outputs/ShardMeld/experiments/smoke-m/missing",
+  "missing_chunk_occurrences": 6,
+  "missing_payload_bytes": 481581,
+  "unique_chunk_files_written": 6,
+  "unique_chunk_file_bytes": 481581
+}

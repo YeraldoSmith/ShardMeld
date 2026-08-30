@@ -1,0 +1,17 @@
+{
+  "source": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw",
+  "database": "outputs/ShardMeld/experiments/sqlite-3.53.3-to-3.53.4/raw-sqlite3-c/s/index.db",
+  "profile": {
+    "min_size": 8192,
+    "avg_size": 32768,
+    "max_size": 131072
+  },
+  "files_indexed": 1,
+  "bytes_indexed": 9514279,
+  "chunks_indexed": 274,
+  "database_bytes": 110592,
+  "index_overhead_ratio": 0.01162379198676011,
+  "elapsed_ms": 29,
+  "bytes_per_second": 319683670.96032864,
+  "skipped_entries": []
+}

@@ -1,0 +1,17 @@
+{
+  "source": "<WORKSPACE>/outputs/ShardMeld/experiments/smoke-m/sources",
+  "database": "experiments/profile-matrix/l/index.db",
+  "profile": {
+    "min_size": 65536,
+    "avg_size": 262144,
+    "max_size": 1048576
+  },
+  "files_indexed": 1,
+  "bytes_indexed": 16777216,
+  "chunks_indexed": 47,
+  "database_bytes": 65536,
+  "index_overhead_ratio": 0.00390625,
+  "elapsed_ms": 55,
+  "bytes_per_second": 304647710.7908672,
+  "skipped_entries": []
+}

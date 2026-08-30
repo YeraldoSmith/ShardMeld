@@ -1,0 +1,8 @@
+{
+  "file": "<WORKSPACE>/outputs/ShardMeld/experiments/smoke-m/rebuilt-v2.bin",
+  "expected_sha256": "f437a9a4e82b28ff74486d73d0d1814ea7d2a4ee22f81361a2b1ad49dc231881",
+  "actual_sha256": "f437a9a4e82b28ff74486d73d0d1814ea7d2a4ee22f81361a2b1ad49dc231881",
+  "expected_bytes": 16842753,
+  "actual_bytes": 16842753,
+  "verified": true
+}

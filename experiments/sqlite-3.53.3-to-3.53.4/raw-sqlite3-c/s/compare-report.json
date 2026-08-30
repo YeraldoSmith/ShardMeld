@@ -1,0 +1,2691 @@
+{
+  "target_name": "sqlite3.c",
+  "target_bytes": 9515341,
+  "target_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "target_chunks": 274,
+  "matched_chunks": 257,
+  "missing_chunks": 17,
+  "local_reusable_bytes": 8807728,
+  "missing_payload_bytes": 707613,
+  "reuse_ratio": 0.925634509577744,
+  "index": {
+    "files": 1,
+    "bytes": 9514279,
+    "chunks": 274,
+    "database_bytes": 110592
+  },
+  "plan": [
+    {
+      "offset": 0,
+      "length": 55733,
+      "hash": "66f71dd45a82caa0efde175b4980b8f33027a9791551420be95b6146e5e8adfb",
+      "local_source": null
+    },
+    {
+      "offset": 55733,
+      "length": 36961,
+      "hash": "34f0c7b1ea89457692910de947c2138a02f9a339de08bd197ce2e4c8960ed838",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 55733,
+        "length": 36961
+      }
+    },
+    {
+      "offset": 92694,
+      "length": 11105,
+      "hash": "36c4270dc95343b868a8f7f3f39c2e174497b6d073716934ce1e1f27015a7e37",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 92694,
+        "length": 11105
+      }
+    },
+    {
+      "offset": 103799,
+      "length": 34605,
+      "hash": "80efe5b62f5fdad2b35d29af24daa1542c0ba3f1919a5e814dcaac36b6911c81",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 103799,
+        "length": 34605
+      }
+    },
+    {
+      "offset": 138404,
+      "length": 11834,
+      "hash": "46d0377e6adc1557724e708f0e35db4dead06f7ce77347de4a21e01d059fdadb",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 138404,
+        "length": 11834
+      }
+    },
+    {
+      "offset": 150238,
+      "length": 25681,
+      "hash": "508fe7eb67541cf201edd883c975be521fc25ccd98905b42d6b26f8881c4fbe9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 150238,
+        "length": 25681
+      }
+    },
+    {
+      "offset": 175919,
+      "length": 21772,
+      "hash": "072ee8215d949d0a0e2273a950ee23fa4e8825d4e53e98e7f2897a55584e4d29",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 175919,
+        "length": 21772
+      }
+    },
+    {
+      "offset": 197691,
+      "length": 48486,
+      "hash": "ee04e6d56f145c1295864031efc9c2b5fc0666513e9a78fb9b645d586924904d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 197691,
+        "length": 48486
+      }
+    },
+    {
+      "offset": 246177,
+      "length": 66380,
+      "hash": "8b32b520a3caa351e254d1d79add55a74a16c653d422a4e946cd63b13029c4ea",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 246177,
+        "length": 66380
+      }
+    },
+    {
+      "offset": 312557,
+      "length": 95690,
+      "hash": "1f4bddff825920fd8daa283fe87987667e97bdbb6fec4290bed8f4a07ad488f7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 312557,
+        "length": 95690
+      }
+    },
+    {
+      "offset": 408247,
+      "length": 17528,
+      "hash": "eb2e726490d7eb0b7df190ab4f1cbd6411de34584286a1d991c338991c7f5c9e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 408247,
+        "length": 17528
+      }
+    },
+    {
+      "offset": 425775,
+      "length": 10238,
+      "hash": "a10ee4b4440121561666b4b7e6f7a1f7a6b854c18281e32a08ccf262283ee8a4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 425775,
+        "length": 10238
+      }
+    },
+    {
+      "offset": 436013,
+      "length": 68623,
+      "hash": "3ad951ef2ad03774d6c4a9ce2954a302c08a7cb1f87ace8ef3690fb7ab91180a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 436013,
+        "length": 68623
+      }
+    },
+    {
+      "offset": 504636,
+      "length": 16349,
+      "hash": "8ee431808b2788f487fd43a2d43fcf8ae4132a09f550915e9279c75b9375977c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 504636,
+        "length": 16349
+      }
+    },
+    {
+      "offset": 520985,
+      "length": 45114,
+      "hash": "e60363182d0e113955b6cb23650d3d50b4c840a6a426c155d8610b6014b65c6e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 520985,
+        "length": 45114
+      }
+    },
+    {
+      "offset": 566099,
+      "length": 62565,
+      "hash": "fa52bb5ce272bea596fb5186d501c2b3f15b8cf1218b3f26f3506788567c2781",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 566099,
+        "length": 62565
+      }
+    },
+    {
+      "offset": 628664,
+      "length": 74451,
+      "hash": "91291da4524461b85cd39e6077f26e966129d0134e5e63205251e6ce4f9c5791",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 628664,
+        "length": 74451
+      }
+    },
+    {
+      "offset": 703115,
+      "length": 27431,
+      "hash": "ae01e78a01c7be50d184d77b23329a7e0df718c110abdb16573dea7dcdca686e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 703115,
+        "length": 27431
+      }
+    },
+    {
+      "offset": 730546,
+      "length": 33609,
+      "hash": "a848784db35f16aeaabacbeef1eb49c3bcfb0ba724517b0b37040cf6dfd41c40",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 730546,
+        "length": 33609
+      }
+    },
+    {
+      "offset": 764155,
+      "length": 87836,
+      "hash": "12ff496d426d8448d6d12d1a35c824be3eb5c62725f94372d34fa6ef4837fa4f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 764155,
+        "length": 87836
+      }
+    },
+    {
+      "offset": 851991,
+      "length": 41146,
+      "hash": "a136f5606cbe811ca4e0bbf0dbdb23acd2bb570ec7a30b14ecc4fe9b6641b90a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 851991,
+        "length": 41146
+      }
+    },
+    {
+      "offset": 893137,
+      "length": 8275,
+      "hash": "5b9119d64034cf2c43f94a2c5927a78991e376c697e4ee33aadeb872b9781281",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 893137,
+        "length": 8275
+      }
+    },
+    {
+      "offset": 901412,
+      "length": 104756,
+      "hash": "6a5877f8f635dd55bf2fe409d04ae6674dc74d306d3039e5e0dc6d92fbb8f26e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 901412,
+        "length": 104756
+      }
+    },
+    {
+      "offset": 1006168,
+      "length": 8510,
+      "hash": "a291015aeaa8c03ddb776f228aca6557dbb4ea9742538da8f328e0bb0ebd30ef",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1006168,
+        "length": 8510
+      }
+    },
+    {
+      "offset": 1014678,
+      "length": 14483,
+      "hash": "ab43e508371a86e332ff00639b5e599de27a2ac11bbbc4973acfdbd22829c67f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1014678,
+        "length": 14483
+      }
+    },
+    {
+      "offset": 1029161,
+      "length": 35664,
+      "hash": "19106693ecb971b8f696ee7b6bddf902183ea17dcf37404b3cb8411c080a80ab",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1029161,
+        "length": 35664
+      }
+    },
+    {
+      "offset": 1064825,
+      "length": 29078,
+      "hash": "d415f243ff180c3966c82b00f791fba12ab6d08cc6288f9f5287cb9dbf46e4d8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1064825,
+        "length": 29078
+      }
+    },
+    {
+      "offset": 1093903,
+      "length": 43292,
+      "hash": "be782a7934252bdc8f4c8af25e2549fc364d6c7dc71d509c272fcc17e0f3c5fd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1093903,
+        "length": 43292
+      }
+    },
+    {
+      "offset": 1137195,
+      "length": 38619,
+      "hash": "3e500ab0694286ec562b63a11908ffbcad5932a1480941c4ce47ac6f2a4ffa83",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1137195,
+        "length": 38619
+      }
+    },
+    {
+      "offset": 1175814,
+      "length": 46661,
+      "hash": "069037fbba8261648528dfc4de69623a09caff5a3a0ea376bbb3d4b55e061b3b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1175814,
+        "length": 46661
+      }
+    },
+    {
+      "offset": 1222475,
+      "length": 28280,
+      "hash": "c54bb91a5799c9a88379817cba74c6147c3614be73b8e0517f7cc15468edf2df",
+      "local_source": null
+    },
+    {
+      "offset": 1250755,
+      "length": 13410,
+      "hash": "9c6dc20f2dd91798c007e7106893331e3e7cd4a36ddb2fc47684ff44923d49d0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1250754,
+        "length": 13410
+      }
+    },
+    {
+      "offset": 1264165,
+      "length": 32790,
+      "hash": "ed959ca5be8fdd21248c8c784481e6d419eac7241097c1caa9d77273381c9687",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1264164,
+        "length": 32790
+      }
+    },
+    {
+      "offset": 1296955,
+      "length": 9334,
+      "hash": "f73620772df2a0a878715b052479b79da126f0b8ed60ffdf8d532bca0db6bb43",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1296954,
+        "length": 9334
+      }
+    },
+    {
+      "offset": 1306289,
+      "length": 11133,
+      "hash": "02d78f2180d2afea8301cd3afeea5797009b9687e14b002dca9335b589459df5",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1306288,
+        "length": 11133
+      }
+    },
+    {
+      "offset": 1317422,
+      "length": 16249,
+      "hash": "b9546ded20c6250efa585e963da824ff72ddb30cc9054bd14944dbc4c7853734",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1317421,
+        "length": 16249
+      }
+    },
+    {
+      "offset": 1333671,
+      "length": 73996,
+      "hash": "5090098009b6ef99f065ec2a887820d18ca577128ffeb7db03e780e1da4f9300",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1333670,
+        "length": 73996
+      }
+    },
+    {
+      "offset": 1407667,
+      "length": 14155,
+      "hash": "f1a5d9ca87b5da069f0aa5ecb95761bc9e635eadee25c1b932c2077249cbe9d0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1407666,
+        "length": 14155
+      }
+    },
+    {
+      "offset": 1421822,
+      "length": 45556,
+      "hash": "7dd870c79217ce34c5ebcc85e3bb1962a0d6e27db336d79bf92ac232cf9e47c8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1421821,
+        "length": 45556
+      }
+    },
+    {
+      "offset": 1467378,
+      "length": 47770,
+      "hash": "b3e9f5e6d17a4b8c5b1578fdb14b77cd31d2d48bdb771b626e172ad93c43eaaf",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1467377,
+        "length": 47770
+      }
+    },
+    {
+      "offset": 1515148,
+      "length": 20652,
+      "hash": "3bf838fba7e2ac8aa6331ca8f3d1091a8e017e79b17712b8c29d5c728666f8dd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1515147,
+        "length": 20652
+      }
+    },
+    {
+      "offset": 1535800,
+      "length": 36393,
+      "hash": "133d236b1c43c6b27c4a1623fcadbd242107c96c3fda01389c62acbbaf215ddd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1535799,
+        "length": 36393
+      }
+    },
+    {
+      "offset": 1572193,
+      "length": 13962,
+      "hash": "0ce60c7c19a72fef9cfc558c630ca6984e4b3ae44a9ea5380957db5e01b152fc",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1572192,
+        "length": 13962
+      }
+    },
+    {
+      "offset": 1586155,
+      "length": 45002,
+      "hash": "52202690dd5dddb415e788f3e74481af46ab242a36e0b415bd5d66f527834ac4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1586154,
+        "length": 45002
+      }
+    },
+    {
+      "offset": 1631157,
+      "length": 64139,
+      "hash": "8b5a2945aad2def71b88159dec647e701d400d0933d51b610bf4bc9b548e3b0f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1631156,
+        "length": 64139
+      }
+    },
+    {
+      "offset": 1695296,
+      "length": 45219,
+      "hash": "44e29f0dd5ee32fe1601f69bf16ecdf21ab71e9d21be6e5a4bac484480388331",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1695295,
+        "length": 45219
+      }
+    },
+    {
+      "offset": 1740515,
+      "length": 71286,
+      "hash": "52bd82987914ba4166a40f3412863dd85eaa6da6fddc3767c843f14db2f55539",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1740514,
+        "length": 71286
+      }
+    },
+    {
+      "offset": 1811801,
+      "length": 33564,
+      "hash": "2c6faff2f4b28404dad3e103e63167c36800fceb6750a662dd8acf2b71c40212",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1811800,
+        "length": 33564
+      }
+    },
+    {
+      "offset": 1845365,
+      "length": 32795,
+      "hash": "a978b7996cc6c211f0086bacc113c2b07be33d3ccc09e1da48c115cc2b5a6c5d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1845364,
+        "length": 32795
+      }
+    },
+    {
+      "offset": 1878160,
+      "length": 22180,
+      "hash": "910e9dd1bb0051f09cc227a1c77fa7d46632acd44ad462587fd91dcbfab2dde1",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1878159,
+        "length": 22180
+      }
+    },
+    {
+      "offset": 1900340,
+      "length": 54498,
+      "hash": "1de22f7d1d6a8084f98e79a152aeeec9c3e58e12e817e9a11e4646c062964e34",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1900339,
+        "length": 54498
+      }
+    },
+    {
+      "offset": 1954838,
+      "length": 50389,
+      "hash": "265620fef2d80abe96220a386ce0bef3d9688a1e4f2582676ea5d59d557eb2b4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 1954837,
+        "length": 50389
+      }
+    },
+    {
+      "offset": 2005227,
+      "length": 34321,
+      "hash": "00779d899bfc4d1732c60ab3292b9e0a48727ba58fc745636a3e42fb50ee38aa",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2005226,
+        "length": 34321
+      }
+    },
+    {
+      "offset": 2039548,
+      "length": 42098,
+      "hash": "8a8469e17b31b1aad83cbe8c14e67ef2e608bd1e28e5c4107cad0cb67e6e66d4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2039547,
+        "length": 42098
+      }
+    },
+    {
+      "offset": 2081646,
+      "length": 37134,
+      "hash": "d3881d7ecc3fa3b4478c25ebb4b1c96f4fb19bdd8ed41de04fa349cf034a1b77",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2081645,
+        "length": 37134
+      }
+    },
+    {
+      "offset": 2118780,
+      "length": 28858,
+      "hash": "108a1e71d9911e1a4851f461c774f0175e9b53f76e042bf5657f76feede4e430",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2118779,
+        "length": 28858
+      }
+    },
+    {
+      "offset": 2147638,
+      "length": 12409,
+      "hash": "5fa72811ae48346f1eedf40f3431a8f79491f308c4f3444968a2238012b6dfcd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2147637,
+        "length": 12409
+      }
+    },
+    {
+      "offset": 2160047,
+      "length": 39784,
+      "hash": "27490c2147ecaab996b0a0ac61c9787d02ff764f8bc0fa3d09f94d9e3fc7f9a4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2160046,
+        "length": 39784
+      }
+    },
+    {
+      "offset": 2199831,
+      "length": 47106,
+      "hash": "fedb0cc3ad4ed519773ca6d95116fef4d856b55cc6a531b30f01b1081205aa38",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2199830,
+        "length": 47106
+      }
+    },
+    {
+      "offset": 2246937,
+      "length": 57543,
+      "hash": "828a98b69ffe43742ac07a2c23a1691f32e625bbaf1c4d1b52467d1ed832c316",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2246936,
+        "length": 57543
+      }
+    },
+    {
+      "offset": 2304480,
+      "length": 17735,
+      "hash": "7926236a61e4ac02ef1db37bd5634264dc13e4a8f0e3c623ae106c6bb5390628",
+      "local_source": null
+    },
+    {
+      "offset": 2322215,
+      "length": 37680,
+      "hash": "32a5f1aee9732fd1ddbca388896e3396471e08035191725e499251a1f18fa37d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2322200,
+        "length": 37680
+      }
+    },
+    {
+      "offset": 2359895,
+      "length": 47541,
+      "hash": "1a4b594e48b115501bd37acfe134e50abf7d99babfd907ef138f75f044c25f1b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2359880,
+        "length": 47541
+      }
+    },
+    {
+      "offset": 2407436,
+      "length": 44125,
+      "hash": "520c8fbdffdee1531dbece73d8c3985a331a15fa2527673f1f986865d22f3ec8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2407421,
+        "length": 44125
+      }
+    },
+    {
+      "offset": 2451561,
+      "length": 88130,
+      "hash": "f1a896d9c87a9887ca6d2b1501aaeedf95534c347d2d417f3d4f45191f68307c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2451546,
+        "length": 88130
+      }
+    },
+    {
+      "offset": 2539691,
+      "length": 67200,
+      "hash": "4126d0225b8cf3213449663b44c819e29ecabffee204a5c9c8a3ac805601ea6c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2539676,
+        "length": 67200
+      }
+    },
+    {
+      "offset": 2606891,
+      "length": 28792,
+      "hash": "e70c3e6d8a0878447fcab9690de3c1ce28df1a8185a91d23baec4336a594e96d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2606876,
+        "length": 28792
+      }
+    },
+    {
+      "offset": 2635683,
+      "length": 47916,
+      "hash": "385a05e5d7d797237059f02b76144cc0f6132c6374c7627f10b371e77ec69ead",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2635668,
+        "length": 47916
+      }
+    },
+    {
+      "offset": 2683599,
+      "length": 34938,
+      "hash": "fe4af1020833db54143f0296381d582986f6381832b687d23d19f1108327b1f9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2683584,
+        "length": 34938
+      }
+    },
+    {
+      "offset": 2718537,
+      "length": 44031,
+      "hash": "ea32b2de187d48940eafa0c392307224e74cd936728923f0e977ac5621d05237",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2718522,
+        "length": 44031
+      }
+    },
+    {
+      "offset": 2762568,
+      "length": 27219,
+      "hash": "4fa983de05f62c9815b63ef935cddf9412224d06e9a512c4dfea467549f406cc",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2762553,
+        "length": 27219
+      }
+    },
+    {
+      "offset": 2789787,
+      "length": 67158,
+      "hash": "9d4055eacbb6fead6a5283686321172e9641a116927179b8f4ab53db62f2c28a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2789772,
+        "length": 67158
+      }
+    },
+    {
+      "offset": 2856945,
+      "length": 41766,
+      "hash": "ce6ca62373a1e292430c3d27b358846dfa0605f115954333577a1272aa9b3b5b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2856930,
+        "length": 41766
+      }
+    },
+    {
+      "offset": 2898711,
+      "length": 31431,
+      "hash": "6413775dfff078810edb1ecc1911e896be4461018399d41cea522829f0a5dab3",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2898696,
+        "length": 31431
+      }
+    },
+    {
+      "offset": 2930142,
+      "length": 34612,
+      "hash": "490cc044e7f92dbc476e936cb9c072478bfb41f79104d0a8218328e49314f53b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2930127,
+        "length": 34612
+      }
+    },
+    {
+      "offset": 2964754,
+      "length": 41718,
+      "hash": "479eef0881685c81b5c37a8b3db92520e04da9b1f62c2ddc3ca8e1b6a7f7cbf5",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 2964739,
+        "length": 41718
+      }
+    },
+    {
+      "offset": 3006472,
+      "length": 44283,
+      "hash": "143610674bf78e5cece21b9a7e9a0e671411cdeda78a9c148628a62e502414b0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3006457,
+        "length": 44283
+      }
+    },
+    {
+      "offset": 3050755,
+      "length": 55483,
+      "hash": "7f0eeb54be1559a8abc56d5012ff077a7fa46b8ee0dcf1923bb67146658d50bd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3050740,
+        "length": 55483
+      }
+    },
+    {
+      "offset": 3106238,
+      "length": 11239,
+      "hash": "48da15cfb5ff1be928744efc15780e04cdb9d34246d28a81b4fdcfb3b5f33a7f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3106223,
+        "length": 11239
+      }
+    },
+    {
+      "offset": 3117477,
+      "length": 13371,
+      "hash": "3e2335d8ece41f4c710254cb1ca498d93cf797d189501ff6b8f12bef80513072",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3117462,
+        "length": 13371
+      }
+    },
+    {
+      "offset": 3130848,
+      "length": 13419,
+      "hash": "895093fc283e8a27549a10fab9e7c837ef2b712d36aa9147b57a94ce8e8d3e93",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3130833,
+        "length": 13419
+      }
+    },
+    {
+      "offset": 3144267,
+      "length": 38623,
+      "hash": "8c8e24413bae6b9aaec98a428b27d892d807b23f140800992050c210672dec90",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3144252,
+        "length": 38623
+      }
+    },
+    {
+      "offset": 3182890,
+      "length": 47029,
+      "hash": "464c5391663a436fe0f8dd7c06ed21adb6aead39733ca761b076b7ba64ab4cee",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3182875,
+        "length": 47029
+      }
+    },
+    {
+      "offset": 3229919,
+      "length": 26633,
+      "hash": "3406d27061604199e84ac9559087d7c23bd4c1edbf43b9999b6fced319fcfd56",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3229904,
+        "length": 26633
+      }
+    },
+    {
+      "offset": 3256552,
+      "length": 9446,
+      "hash": "7866ec070fd8e146fe40db531194c312f027d0ac7be336dd5eaa9a2888d8c9c3",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3256537,
+        "length": 9446
+      }
+    },
+    {
+      "offset": 3265998,
+      "length": 47439,
+      "hash": "6d54dea7792577e07cb96922ed44896ea93318eaa752d5757141c67c6e9d1040",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3265983,
+        "length": 47439
+      }
+    },
+    {
+      "offset": 3313437,
+      "length": 35928,
+      "hash": "753cf53caf886d6d7766d10fe4566f62b6d1cfbe2197e83fcc0cddcdcc704284",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3313422,
+        "length": 35928
+      }
+    },
+    {
+      "offset": 3349365,
+      "length": 48939,
+      "hash": "3afa1c26fae690f8de5dcad621c3d564ab6ba71a752e98c65e2ab945b1fe1493",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3349350,
+        "length": 48939
+      }
+    },
+    {
+      "offset": 3398304,
+      "length": 40770,
+      "hash": "342a67420fa936ebe7f9cd962ef7cb6967056f0e2585c05083b643fc6af4d0c8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3398289,
+        "length": 40770
+      }
+    },
+    {
+      "offset": 3439074,
+      "length": 33918,
+      "hash": "13ed75ab9aff84126797746c4f4824dfb10487416ef62a56e22bd42e516521df",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3439059,
+        "length": 33918
+      }
+    },
+    {
+      "offset": 3472992,
+      "length": 9541,
+      "hash": "cef4c4c286844ddf70bcb0b746eae5e5f32fbc7fbe61808f33e738134b049f15",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3472977,
+        "length": 9541
+      }
+    },
+    {
+      "offset": 3482533,
+      "length": 50140,
+      "hash": "bae55914205720fa34694202fcf20191eea2e652cfc89cc4b393997d43172e93",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3482518,
+        "length": 50140
+      }
+    },
+    {
+      "offset": 3532673,
+      "length": 29257,
+      "hash": "083642c082427bc0373dcb31fac4b5becc33001988ca592c6e8a2748470caf86",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3532658,
+        "length": 29257
+      }
+    },
+    {
+      "offset": 3561930,
+      "length": 8714,
+      "hash": "b13d449df6e32700dcb8efb9547fdbb32d9c2b85a9e1cb3d4d65eecf48f85831",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3561915,
+        "length": 8714
+      }
+    },
+    {
+      "offset": 3570644,
+      "length": 35806,
+      "hash": "67305cb23d0d47c513088157dc1562a59ff90f569b5e36fabd7631c04cae05ab",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3570629,
+        "length": 35806
+      }
+    },
+    {
+      "offset": 3606450,
+      "length": 17924,
+      "hash": "35965b0e262d28f6664b671e00ebee9afe1bcc9043e4b9466c49efb70c6f7b43",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3606435,
+        "length": 17924
+      }
+    },
+    {
+      "offset": 3624374,
+      "length": 39660,
+      "hash": "42c67e52ec7d89035b5f1277a32774726f7d992b6968ca4b8609bd2206d4d30d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3624359,
+        "length": 39660
+      }
+    },
+    {
+      "offset": 3664034,
+      "length": 33326,
+      "hash": "11db9507545aeb020905303016e4f8bbe930c9629092c2029445baa6f7e419a5",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3664019,
+        "length": 33326
+      }
+    },
+    {
+      "offset": 3697360,
+      "length": 16879,
+      "hash": "403d88d5a51aad59c983feec9586f2f07c4594f38264674525757451cc1ccba8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3697345,
+        "length": 16879
+      }
+    },
+    {
+      "offset": 3714239,
+      "length": 15417,
+      "hash": "b0b3bbd7cb1f9221364f59186df3eac993ac7ef0eeb40786ee690a66bd645194",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3714224,
+        "length": 15417
+      }
+    },
+    {
+      "offset": 3729656,
+      "length": 33349,
+      "hash": "c57cc5b28d263a44b976d17b9784a98e16c4c7b374c21ca9c207421d2986d18f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3729641,
+        "length": 33349
+      }
+    },
+    {
+      "offset": 3763005,
+      "length": 17110,
+      "hash": "c046d9ce063ce63f7cd793a94607f1189013757b6d1dff36808611e5da331475",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3762990,
+        "length": 17110
+      }
+    },
+    {
+      "offset": 3780115,
+      "length": 51930,
+      "hash": "99034a04324f4b111b5ba98bd6e6561366b807042346bd09a4ca6ebe9bc7e76b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3780100,
+        "length": 51930
+      }
+    },
+    {
+      "offset": 3832045,
+      "length": 23131,
+      "hash": "60f4cfa4b473bcd47c70ce3c2776f94200d25d257875c8c25a231be25b672a80",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3832030,
+        "length": 23131
+      }
+    },
+    {
+      "offset": 3855176,
+      "length": 34031,
+      "hash": "a9b270470e1f77c7f40670bfeb4cb2e949c5c60c6946965fd22f2fc43467d5f1",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3855161,
+        "length": 34031
+      }
+    },
+    {
+      "offset": 3889207,
+      "length": 21887,
+      "hash": "133c7a86dfff6fd116925ed3f89238a4d465497f3fa1b2eb83320c07beda0679",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3889192,
+        "length": 21887
+      }
+    },
+    {
+      "offset": 3911094,
+      "length": 37512,
+      "hash": "87184d655e9ecfd4c1fbc3d7c0e873014beb6b0825e79701e64d3fda1ab25ca7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3911079,
+        "length": 37512
+      }
+    },
+    {
+      "offset": 3948606,
+      "length": 27022,
+      "hash": "9625a1f3c3865ee3066f44207ebe99e9e27b49f0a871032329cc82a617a468ec",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3948591,
+        "length": 27022
+      }
+    },
+    {
+      "offset": 3975628,
+      "length": 18055,
+      "hash": "33ac4190f35a260b17f44153d2ff5fa1c6916ac63c4c47c8173913411fcb11a2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3975613,
+        "length": 18055
+      }
+    },
+    {
+      "offset": 3993683,
+      "length": 14961,
+      "hash": "898af87701e3637fe842854404c73ee6d30424c6adcf3429249d031087d94a2a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 3993668,
+        "length": 14961
+      }
+    },
+    {
+      "offset": 4008644,
+      "length": 71299,
+      "hash": "9df3c6b44592b5031a04b09d65ff4ec0fe8e11c04f38b1aa1c951b9007e774e1",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4008629,
+        "length": 71299
+      }
+    },
+    {
+      "offset": 4079943,
+      "length": 27234,
+      "hash": "5f393d259bbe4b11665fc999580f4f0d9abc12be321032b04b67df61f6a9ec20",
+      "local_source": null
+    },
+    {
+      "offset": 4107177,
+      "length": 18602,
+      "hash": "3155c2b803cdbc129dc39123306d01e9747a2ee62e943ff46d6a2bacb6a73b4f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4106968,
+        "length": 18602
+      }
+    },
+    {
+      "offset": 4125779,
+      "length": 49881,
+      "hash": "aaddcfe036ddb05eb92871c94cc9141eb85c2fe015b2c8ae1b69d73d0b42e5da",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4125570,
+        "length": 49881
+      }
+    },
+    {
+      "offset": 4175660,
+      "length": 30107,
+      "hash": "98fc47d77cf4f009e41bc7a7d7bd2983c96a3879d56928a805ae553f254345e2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4175451,
+        "length": 30107
+      }
+    },
+    {
+      "offset": 4205767,
+      "length": 42401,
+      "hash": "55796e0c45864aa07020f41633aaece90928b32e49a803491ae8615d457c2c9d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4205558,
+        "length": 42401
+      }
+    },
+    {
+      "offset": 4248168,
+      "length": 26991,
+      "hash": "5f79af6d3f6489d74e1bd4213651357b139cfc4e62a4c3368190de6f57397e60",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4247959,
+        "length": 26991
+      }
+    },
+    {
+      "offset": 4275159,
+      "length": 31530,
+      "hash": "ac203b4f9f1310ca9bdcaef9ed0017f1450f3c02c2a0103ff581d95a44ed823d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4274950,
+        "length": 31530
+      }
+    },
+    {
+      "offset": 4306689,
+      "length": 32851,
+      "hash": "edba6022624ef831bb6c3050d4854b8cbd7041b20795eeb37d1b1f73f4f87ecd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4306480,
+        "length": 32851
+      }
+    },
+    {
+      "offset": 4339540,
+      "length": 41741,
+      "hash": "7bd961cb0c2391598fb7bc95ae7b39e1bc565f12db232edea7c28d175fd2f688",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4339331,
+        "length": 41741
+      }
+    },
+    {
+      "offset": 4381281,
+      "length": 38818,
+      "hash": "c546ef3a301be5fe4cf7eb7e2b159b9af483ed18af0a28c69999b0948dccb2af",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4381072,
+        "length": 38818
+      }
+    },
+    {
+      "offset": 4420099,
+      "length": 18174,
+      "hash": "4b5edbcb169a9f197d25f040fddcad12e73d9e0894e1664c228b23ea22ec713a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4419890,
+        "length": 18174
+      }
+    },
+    {
+      "offset": 4438273,
+      "length": 36485,
+      "hash": "1fb50011733c9cb825d2a763bc37fe1ecf18ce28f85397986da456ce4e40b622",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4438064,
+        "length": 36485
+      }
+    },
+    {
+      "offset": 4474758,
+      "length": 15276,
+      "hash": "4ce8b244df1d8b7ddda0c8deabd65d2fc3a6875d97b2801591db89ca446bfccf",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4474549,
+        "length": 15276
+      }
+    },
+    {
+      "offset": 4490034,
+      "length": 57225,
+      "hash": "2bd79f12ab1b5e12f743930af1586650c43f44de514225eb9a684a753844c5d6",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4489825,
+        "length": 57225
+      }
+    },
+    {
+      "offset": 4547259,
+      "length": 39421,
+      "hash": "f42e9de649b0ef6e09c97300d0ae3948213e9a3d1af8d4a9471e11add8929d75",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4547050,
+        "length": 39421
+      }
+    },
+    {
+      "offset": 4586680,
+      "length": 23700,
+      "hash": "c5e4363a1c58868961eed20f57b309beb22e412c9034a20b63e5c64a095d8f49",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4586471,
+        "length": 23700
+      }
+    },
+    {
+      "offset": 4610380,
+      "length": 9469,
+      "hash": "e6130749aeeca78588a82da72a2cf498dfd32362ba7b3f0a224a3009bd203150",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4610171,
+        "length": 9469
+      }
+    },
+    {
+      "offset": 4619849,
+      "length": 11132,
+      "hash": "fd92c84f39fe3273d71c3ff925f0f86dd57ba7a0fa091fe97661a328629a6a93",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4619640,
+        "length": 11132
+      }
+    },
+    {
+      "offset": 4630981,
+      "length": 67704,
+      "hash": "f548caece6f1bc44720869f9fc544fb559979b7290acfc86ba136b04489d4e42",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4630772,
+        "length": 67704
+      }
+    },
+    {
+      "offset": 4698685,
+      "length": 33875,
+      "hash": "db84b8a1ddda2e76d3f85b8dec1d9bf26ed4d306ba6d8728ad79f60e65adc45e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4698476,
+        "length": 33875
+      }
+    },
+    {
+      "offset": 4732560,
+      "length": 23582,
+      "hash": "b9bada320a8bc065944caaf7d49955787e34d6f66ef41489ec548d0fd82340c8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4732351,
+        "length": 23582
+      }
+    },
+    {
+      "offset": 4756142,
+      "length": 20070,
+      "hash": "c1a47c218fbd1060dac3cb2f8cf0ada715e86dcc8725f39791ef220bede7fe68",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4755933,
+        "length": 20070
+      }
+    },
+    {
+      "offset": 4776212,
+      "length": 15925,
+      "hash": "e5e38143543ba69233b3e81759f38974f70b175af97ea4fca556e4297cebad75",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4776003,
+        "length": 15925
+      }
+    },
+    {
+      "offset": 4792137,
+      "length": 24469,
+      "hash": "ad38875590b6a66eb1fba85434f697a87870022f597c15902c45cc6cd3107cf8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4791928,
+        "length": 24469
+      }
+    },
+    {
+      "offset": 4816606,
+      "length": 18991,
+      "hash": "4ea7eae9560aad1001114c39b238506d1709bdeb7cf5bd1b72b629d6f8711f49",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4816397,
+        "length": 18991
+      }
+    },
+    {
+      "offset": 4835597,
+      "length": 33030,
+      "hash": "371369011e5b7b4b84f6d3bb92ba45af3e87860b41d0bf9d28cf8950fc66f109",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4835388,
+        "length": 33030
+      }
+    },
+    {
+      "offset": 4868627,
+      "length": 26260,
+      "hash": "e47e2e29d155dc698b94dc156c62e7a4e76d2b7b7cb4ed7bf417cd465985adb6",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4868418,
+        "length": 26260
+      }
+    },
+    {
+      "offset": 4894887,
+      "length": 8781,
+      "hash": "769e15b161a5c498e9ab22181de57c0695184f98822c37f4956ffa990cbadb97",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4894678,
+        "length": 8781
+      }
+    },
+    {
+      "offset": 4903668,
+      "length": 10180,
+      "hash": "475b5f8d7f67572a2d430f081cc6bd62c3cfebb243678bd44e9b8aa6198553f2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4903459,
+        "length": 10180
+      }
+    },
+    {
+      "offset": 4913848,
+      "length": 8638,
+      "hash": "c7496e287d77399a713621e2a4840ee96fed91cdb0c04465b8a89ed76c1cb002",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4913639,
+        "length": 8638
+      }
+    },
+    {
+      "offset": 4922486,
+      "length": 14096,
+      "hash": "5a6893962c232c8d2bd1947ce7b43fb78cb1b6fb4d3279b7c5e5ce8400024e43",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4922277,
+        "length": 14096
+      }
+    },
+    {
+      "offset": 4936582,
+      "length": 29031,
+      "hash": "a6359bbe5a5840cd47f76c497a4d50957eb63b3acb7bed5a87958e66d5c9f787",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4936373,
+        "length": 29031
+      }
+    },
+    {
+      "offset": 4965613,
+      "length": 20248,
+      "hash": "1e93cd76d54e728675e9ab680e946e5b7bfcb164fe52b93f91bc5d89db907ec7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4965404,
+        "length": 20248
+      }
+    },
+    {
+      "offset": 4985861,
+      "length": 26046,
+      "hash": "d055b4fb4fa08dd62e104d571359b0711352306259b6dfdc5594db490fd595f0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 4985652,
+        "length": 26046
+      }
+    },
+    {
+      "offset": 5011907,
+      "length": 40345,
+      "hash": "c12bc3fa563babbc70b18aee4b984cc320425326c171802ab1fa2ddc87d4a589",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5011698,
+        "length": 40345
+      }
+    },
+    {
+      "offset": 5052252,
+      "length": 48960,
+      "hash": "646362698cc7a2f220da7f4b5eee3c513727299de7f9bd44dd3ce03a2a8542db",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5052043,
+        "length": 48960
+      }
+    },
+    {
+      "offset": 5101212,
+      "length": 48794,
+      "hash": "da392f6fb9c4d4d9c5db2908693ebc1ba3ec842c1b259d373f92fd4783b6acff",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5101003,
+        "length": 48794
+      }
+    },
+    {
+      "offset": 5150006,
+      "length": 31397,
+      "hash": "d125f26c7ae05a3e6f303cfa7ffdf47920c193895fb33e8d29a27869af932af0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5149797,
+        "length": 31397
+      }
+    },
+    {
+      "offset": 5181403,
+      "length": 8209,
+      "hash": "0164ae4952328544e19947ada8c1b771003dbb41ff8fe1515ffb1a292924ae17",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5181194,
+        "length": 8209
+      }
+    },
+    {
+      "offset": 5189612,
+      "length": 8294,
+      "hash": "d146f4ea231359e46675c3f54e08e6a570d9b2c9059d4ffe2ffbea08a610e5be",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5189403,
+        "length": 8294
+      }
+    },
+    {
+      "offset": 5197906,
+      "length": 8567,
+      "hash": "ad7144fe7d55eb9f4a9f18a5decd987abb78cfdc003922d8b1cee9570a6889f1",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5197697,
+        "length": 8567
+      }
+    },
+    {
+      "offset": 5206473,
+      "length": 15697,
+      "hash": "7f68ae057256297055350dcc85fa886029a125dccf3fd413b2f6bbd47b3433a7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5206264,
+        "length": 15697
+      }
+    },
+    {
+      "offset": 5222170,
+      "length": 35736,
+      "hash": "9a4a4345c475ecf1ef45d6eb84ab0774e3597458f4e76ae2fb17de7004df28d6",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5221961,
+        "length": 35736
+      }
+    },
+    {
+      "offset": 5257906,
+      "length": 17117,
+      "hash": "f1f5c2ca004c22f3c62135e896c993d350c183e6b0de528c51019e72dd5cf893",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5257697,
+        "length": 17117
+      }
+    },
+    {
+      "offset": 5275023,
+      "length": 34779,
+      "hash": "e4d59d01003343d0643c007b5daac92d405539902258bc540a2c6fc05d2603ad",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5274814,
+        "length": 34779
+      }
+    },
+    {
+      "offset": 5309802,
+      "length": 20142,
+      "hash": "fbc9828a47155a801639da93d332bde69877b628e0d908f3b5a3321e0180ea43",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5309593,
+        "length": 20142
+      }
+    },
+    {
+      "offset": 5329944,
+      "length": 22297,
+      "hash": "084ee3ab68f39b965fdb2ae6ab7bfefb4f88c2411b925b738e0fc092bdc359a9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5329735,
+        "length": 22297
+      }
+    },
+    {
+      "offset": 5352241,
+      "length": 19979,
+      "hash": "6a240db47cfd05bbcc1bd6c4f66c823962228998cd4385e96225aa141445dbf0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5352032,
+        "length": 19979
+      }
+    },
+    {
+      "offset": 5372220,
+      "length": 54081,
+      "hash": "572bdb15698c9205950bab1184005a2a6d6d2f4ab50cd14491759e8ae47b7f1a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5372011,
+        "length": 54081
+      }
+    },
+    {
+      "offset": 5426301,
+      "length": 34636,
+      "hash": "6b36195b32eb909b9c7927d24bf9e70118391f5ca7e5d71b5458d3ac6ede9477",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5426092,
+        "length": 34636
+      }
+    },
+    {
+      "offset": 5460937,
+      "length": 9130,
+      "hash": "ed537b49fa8031ed57cb74bc1b0a59c7370b1f06724e4ca1df0220d77fcb6495",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5460728,
+        "length": 9130
+      }
+    },
+    {
+      "offset": 5470067,
+      "length": 13540,
+      "hash": "e154c9f1e40e79c644004153d6171470eb735548313a4d83c42985546fc0213c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5469858,
+        "length": 13540
+      }
+    },
+    {
+      "offset": 5483607,
+      "length": 36713,
+      "hash": "cdd4d8e2c0686f07e8a47133d5999c2b98cb7026be218bb6e1cf8c96679e2507",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5483398,
+        "length": 36713
+      }
+    },
+    {
+      "offset": 5520320,
+      "length": 42411,
+      "hash": "df3b1a00cf9ac0e7d48f7a22542fe12ba50973dc34f082ec882dfbc2ed3ec45e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5520111,
+        "length": 42411
+      }
+    },
+    {
+      "offset": 5562731,
+      "length": 91102,
+      "hash": "1814d3ec19fe3e4cf32b5bc1fe8278cb38dbcc8b8f7b37a17db20777c5e0b253",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5562522,
+        "length": 91102
+      }
+    },
+    {
+      "offset": 5653833,
+      "length": 34394,
+      "hash": "78df5e9430f49e385b32e01b95c38d70704696cbca0a5c811ba11009f0c89dae",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5653624,
+        "length": 34394
+      }
+    },
+    {
+      "offset": 5688227,
+      "length": 39368,
+      "hash": "184ee674cda7668d1b1215ddde1fe54c68fd5bb05929d13d243c011cb66897d0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5688018,
+        "length": 39368
+      }
+    },
+    {
+      "offset": 5727595,
+      "length": 34001,
+      "hash": "6e8741733f5665199c280aaf29d21bf0daaa6b9a8ff77f321259fc29b596accd",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5727386,
+        "length": 34001
+      }
+    },
+    {
+      "offset": 5761596,
+      "length": 27987,
+      "hash": "a6faf2efd3028d24a39d827def302d1b7d2a62e7b033046abff4b9b80fe696fa",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5761387,
+        "length": 27987
+      }
+    },
+    {
+      "offset": 5789583,
+      "length": 32581,
+      "hash": "9cf758cfbdf4b20905e200cc4ef4de0cb4d133e5c0a16fd770a477a630459596",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5789374,
+        "length": 32581
+      }
+    },
+    {
+      "offset": 5822164,
+      "length": 38720,
+      "hash": "d66dbc6e235f542740a19b8a25d10e29805c2b184412acdb8b1768c960f5a719",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5821955,
+        "length": 38720
+      }
+    },
+    {
+      "offset": 5860884,
+      "length": 32794,
+      "hash": "d8b6ba5438cc6f8754c2f727cfe47c086cc13635ceaddb771b33c07bb6c0c50c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5860675,
+        "length": 32794
+      }
+    },
+    {
+      "offset": 5893678,
+      "length": 8617,
+      "hash": "9ff9569ea97c8d09d406ef8a0542eec615ad1667aed645b5f84039fd8b775e76",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5893469,
+        "length": 8617
+      }
+    },
+    {
+      "offset": 5902295,
+      "length": 38405,
+      "hash": "cb5a2829dbe5bd18d274eea45fd2f5a962b46765e4de6ee9d8ae196d252a0618",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5902086,
+        "length": 38405
+      }
+    },
+    {
+      "offset": 5940700,
+      "length": 36862,
+      "hash": "f21c0b508a7ff81df49c44ec2216f8d3e8e6f2631c6e5a86438fbf94f0298ca1",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5940491,
+        "length": 36862
+      }
+    },
+    {
+      "offset": 5977562,
+      "length": 34207,
+      "hash": "1765c3e3ff686b3addfcb9a80848f58ab318d1af7e69b6347e4f52f98cce4b75",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 5977353,
+        "length": 34207
+      }
+    },
+    {
+      "offset": 6011769,
+      "length": 37957,
+      "hash": "fad36dedb75ada4673b949d59fa89e2a49994ced40dde71fb58911ccad3864ed",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6011560,
+        "length": 37957
+      }
+    },
+    {
+      "offset": 6049726,
+      "length": 22018,
+      "hash": "df778adfd5519e10957465ae5aeb7290e625db61442e00dde185c8c47b7ea795",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6049517,
+        "length": 22018
+      }
+    },
+    {
+      "offset": 6071744,
+      "length": 58096,
+      "hash": "886f1cbae19d09a9af66f5b8d70e250cbe6bfb11a7b2a38ac8a31470b3a18996",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6071535,
+        "length": 58096
+      }
+    },
+    {
+      "offset": 6129840,
+      "length": 32797,
+      "hash": "9fdba2fe42a2bf5b9372e22b14506a43f002f3114469eb5aa04c1b4c8011f15f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6129631,
+        "length": 32797
+      }
+    },
+    {
+      "offset": 6162637,
+      "length": 42656,
+      "hash": "d5e7c8ee650560450a879ffc9dac4eed74c510cba3943be3c1b802909b1aa287",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6162428,
+        "length": 42656
+      }
+    },
+    {
+      "offset": 6205293,
+      "length": 38951,
+      "hash": "e5723ee4112a5c29b2aeaba3d8bf4ab46ef15f4e24c58b7f9d1e0b93ecf3c393",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6205084,
+        "length": 38951
+      }
+    },
+    {
+      "offset": 6244244,
+      "length": 38027,
+      "hash": "630217125d00efd99956bdc71b5a0b4156202937fa69e8eeb5c2af70b4fafd38",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6244035,
+        "length": 38027
+      }
+    },
+    {
+      "offset": 6282271,
+      "length": 41092,
+      "hash": "b0aea497cccdcc77fedeb256c0df56ce1e1fbba2fe7c2c1541b81ccf21c88e05",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6282062,
+        "length": 41092
+      }
+    },
+    {
+      "offset": 6323363,
+      "length": 39764,
+      "hash": "3656d8236663ad0eb4f931c8818fe624514dea33bc857095d3496f9452d0b078",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6323154,
+        "length": 39764
+      }
+    },
+    {
+      "offset": 6363127,
+      "length": 76763,
+      "hash": "fd31c51a631d86487588e8e4675639a4ebc2d739da0c27596eec792f632f9519",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6362918,
+        "length": 76763
+      }
+    },
+    {
+      "offset": 6439890,
+      "length": 48691,
+      "hash": "4f6da50ff4f65fedd3871501d53a89b4ca2812ad77a7c94ee0b7658f0c8e19e1",
+      "local_source": null
+    },
+    {
+      "offset": 6488581,
+      "length": 9596,
+      "hash": "645f1b4a4bf625b88a9c78e6b28ddb820859cb42f1de07472d204a5a45a42c72",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6488361,
+        "length": 9596
+      }
+    },
+    {
+      "offset": 6498177,
+      "length": 36935,
+      "hash": "174f0e26ab071dc3b38e0748e28d033ce2d31773ce5d47d6c92f5e0a2c73b57a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6497957,
+        "length": 36935
+      }
+    },
+    {
+      "offset": 6535112,
+      "length": 33122,
+      "hash": "620b2ca2739ba9c5d4f0c552ea95ee35dbe44535f90ff287eeff2de1ee327ebb",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6534892,
+        "length": 33122
+      }
+    },
+    {
+      "offset": 6568234,
+      "length": 41167,
+      "hash": "817f9cc4db3f3615894ca1afa4bb25086a197b3f95809d0512899c0dbfbc7f6d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6568014,
+        "length": 41167
+      }
+    },
+    {
+      "offset": 6609401,
+      "length": 15609,
+      "hash": "0c3674504fde8705fe4841cd8334f184713f16927ce4a29cc459ea53979dec62",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6609181,
+        "length": 15609
+      }
+    },
+    {
+      "offset": 6625010,
+      "length": 95924,
+      "hash": "7e63502431fb0df0df7c8f2325a34bdbc0083af0689f7dc625ad02e908a85eec",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6624790,
+        "length": 95924
+      }
+    },
+    {
+      "offset": 6720934,
+      "length": 29787,
+      "hash": "a59a69339255e9e70b7aa21a5c8e1aa36110640060c4f585c86056acdc503697",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6720714,
+        "length": 29787
+      }
+    },
+    {
+      "offset": 6750721,
+      "length": 92546,
+      "hash": "aac3f4b7e5852fc0aae779d871eba9f7556cc8ea591218368030f5c0289ebeb2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6750501,
+        "length": 92546
+      }
+    },
+    {
+      "offset": 6843267,
+      "length": 81250,
+      "hash": "cd22ed61c618dc18cc1f207f1c366acd0a1255532784a1e41674a37f536d3542",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6843047,
+        "length": 81250
+      }
+    },
+    {
+      "offset": 6924517,
+      "length": 11652,
+      "hash": "233abad2d43afc998657241ba2540978dd79ca0643ad39eca695df77e1d0b59c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6924297,
+        "length": 11652
+      }
+    },
+    {
+      "offset": 6936169,
+      "length": 43549,
+      "hash": "6107842c81f5edede34f5453fb1e8e37723813c9057fb5321e65b96c3b49616b",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6935949,
+        "length": 43549
+      }
+    },
+    {
+      "offset": 6979718,
+      "length": 44881,
+      "hash": "7d6b3f8a0e3b31222cccbe8288b58c6317a24d1001d250b281a30dc183428662",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 6979498,
+        "length": 44881
+      }
+    },
+    {
+      "offset": 7024599,
+      "length": 48503,
+      "hash": "76c69b12151a6aec63d5b8bc09a3ce14f861309f7d2c9802a4a5a8dd2cbdaf14",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7024379,
+        "length": 48503
+      }
+    },
+    {
+      "offset": 7073102,
+      "length": 9814,
+      "hash": "57bc224f57be108df83151435a8d8463da8486de2a4d895a049386fe68ba2de8",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7072882,
+        "length": 9814
+      }
+    },
+    {
+      "offset": 7082916,
+      "length": 50134,
+      "hash": "158c129f8de5ec96a89a5660b060a9265c74f99eb484c9026dfebe358fa2ae5f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7082696,
+        "length": 50134
+      }
+    },
+    {
+      "offset": 7133050,
+      "length": 38175,
+      "hash": "7a5529850e611e710992f5974ceba80f8f6322655fefc3caf63de21be8ce7725",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7132830,
+        "length": 38175
+      }
+    },
+    {
+      "offset": 7171225,
+      "length": 27356,
+      "hash": "b6b0afc8f670cd3f7087233f4c3afc8366cbebc2869eed14d8cef070dbfda4b4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7171005,
+        "length": 27356
+      }
+    },
+    {
+      "offset": 7198581,
+      "length": 43502,
+      "hash": "074751806d560854515c9d548242465ad38574ecc268bd5916c55dd0ca25c476",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7198361,
+        "length": 43502
+      }
+    },
+    {
+      "offset": 7242083,
+      "length": 23501,
+      "hash": "563bb5a0cbe455a186318292afee134b564c6332a0174af14903339964dda53a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7241863,
+        "length": 23501
+      }
+    },
+    {
+      "offset": 7265584,
+      "length": 27207,
+      "hash": "339f484bc5f94214399483f198f9ae7e425228355bb3858aba86a5490336b91d",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7265364,
+        "length": 27207
+      }
+    },
+    {
+      "offset": 7292791,
+      "length": 23786,
+      "hash": "e4f949ac058f6e2bb62645eec5b571c9756310d0aa8f0a4e7d762a1a8dbe4277",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7292571,
+        "length": 23786
+      }
+    },
+    {
+      "offset": 7316577,
+      "length": 46322,
+      "hash": "d6fdde4f1c2fab727ace181e0b7024a44008aafa4545b50771f8f44a24dcbf85",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7316357,
+        "length": 46322
+      }
+    },
+    {
+      "offset": 7362899,
+      "length": 12338,
+      "hash": "54222c13acef137deac3b6052bea438f929db3f7cc4dc5cb87026febe7b34a60",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7362679,
+        "length": 12338
+      }
+    },
+    {
+      "offset": 7375237,
+      "length": 14947,
+      "hash": "fba9b86d6dfc96894a6a7574ec9e55a7c1e641c28a4af74c5cbc1bddacd55b5c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7375017,
+        "length": 14947
+      }
+    },
+    {
+      "offset": 7390184,
+      "length": 35092,
+      "hash": "c4e8404d66336f72439df0828882bffb239b8529d4274c68e01285a68a4db9d2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7389964,
+        "length": 35092
+      }
+    },
+    {
+      "offset": 7425276,
+      "length": 41347,
+      "hash": "66a4f9115a5be8c646b1655a85d9c404e3a69fb86c205ae9fa1c324ac34a2861",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7425056,
+        "length": 41347
+      }
+    },
+    {
+      "offset": 7466623,
+      "length": 22566,
+      "hash": "63521a63a4c5fa2d756137f4f607dd29c93f6d293175fccc7f0c5caeaee6bbdb",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7466403,
+        "length": 22566
+      }
+    },
+    {
+      "offset": 7489189,
+      "length": 43054,
+      "hash": "4b4289cb100a1f106eb6b7c4e46692a1c35119355c0cd86c343ffd603476c1a9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7488969,
+        "length": 43054
+      }
+    },
+    {
+      "offset": 7532243,
+      "length": 44868,
+      "hash": "8bb491b8d6d1162e8de2fdbe2285aabde9ae9630a34428db2ec66ffc79aa63ec",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7532023,
+        "length": 44868
+      }
+    },
+    {
+      "offset": 7577111,
+      "length": 25084,
+      "hash": "2e3a859e45f478c5b5cd0065be99aea491f9b256cacec0dff5c143981e6b8121",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7576891,
+        "length": 25084
+      }
+    },
+    {
+      "offset": 7602195,
+      "length": 22833,
+      "hash": "2337abdef9802fa8bd4f4c859fcbacf831483fd7a7a68603490e31c8051396af",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7601975,
+        "length": 22833
+      }
+    },
+    {
+      "offset": 7625028,
+      "length": 15781,
+      "hash": "cd74ebb5298bf630510dcb0d873dcd7dcea494eb65a20f88ec7602f56c3425c6",
+      "local_source": null
+    },
+    {
+      "offset": 7640809,
+      "length": 13386,
+      "hash": "71ee6a72f6982feb498e0eb85ed4d6cb14bc433f46ef06bc60be77585046286e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7640594,
+        "length": 13386
+      }
+    },
+    {
+      "offset": 7654195,
+      "length": 23264,
+      "hash": "4fe2281a9368e33b5c4454edded06f2ed3314b24f2df2738e91590ccd211a0f4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7653980,
+        "length": 23264
+      }
+    },
+    {
+      "offset": 7677459,
+      "length": 10431,
+      "hash": "3802a356d8ebc7e2797d59a4e22d60fd1eea3c83d766a8fd3f33f487d9b98730",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7677244,
+        "length": 10431
+      }
+    },
+    {
+      "offset": 7687890,
+      "length": 61000,
+      "hash": "97a34280a1b6fc137cc7a42f347636eb4a01ae9d2ed2b61437991d4c20028f7a",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7687675,
+        "length": 61000
+      }
+    },
+    {
+      "offset": 7748890,
+      "length": 35368,
+      "hash": "443e2a9175f1a55732a19aa9d4bf75a9a1c9c492666bd6e19b118e5bcc272424",
+      "local_source": null
+    },
+    {
+      "offset": 7784258,
+      "length": 35590,
+      "hash": "7c882884e1a3cead97f543179f61512f8e73b9e1e0b2f4de5932e24461b038e9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7783999,
+        "length": 35590
+      }
+    },
+    {
+      "offset": 7819848,
+      "length": 8397,
+      "hash": "117327befe5834e6a90654ed76e3526c4762cd9dfcb76185c6e65a3337284478",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7819589,
+        "length": 8397
+      }
+    },
+    {
+      "offset": 7828245,
+      "length": 12766,
+      "hash": "6b62c20994e1b58af83ffbcf37375d2cb310ca089f89dec8539c50cc74b26142",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7827986,
+        "length": 12766
+      }
+    },
+    {
+      "offset": 7841011,
+      "length": 18298,
+      "hash": "f8161613d2f09a7e03d5d6fd0b077013eaeb148d541a21ae16b351cb63082335",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7840752,
+        "length": 18298
+      }
+    },
+    {
+      "offset": 7859309,
+      "length": 40193,
+      "hash": "75937b4942e308e50ace2ac061a95b2e565aaa97ec7e5aff9e2d8e4a176225e4",
+      "local_source": null
+    },
+    {
+      "offset": 7899502,
+      "length": 21118,
+      "hash": "60ea886f360032dceb886f49db28dd1b8cedb8d905d6477745c9cc7a1171ef05",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7899191,
+        "length": 21118
+      }
+    },
+    {
+      "offset": 7920620,
+      "length": 33284,
+      "hash": "9ef73bc9cffe62851e73a11727794cc31c4f3069190d898d60b4309872081b0f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7920309,
+        "length": 33284
+      }
+    },
+    {
+      "offset": 7953904,
+      "length": 35396,
+      "hash": "d5905c5d4555dc34ffd525bbf51d2d99d7caf82f2766a2413865f0be9ae10865",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7953593,
+        "length": 35396
+      }
+    },
+    {
+      "offset": 7989300,
+      "length": 41146,
+      "hash": "dfa6d19c7a6bf9029e35e8f4c42dcac59c1108fcb18002a3294bcea64100ca44",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 7988989,
+        "length": 41146
+      }
+    },
+    {
+      "offset": 8030446,
+      "length": 10793,
+      "hash": "5a6da4428ecbfd0a632f778a630da8f7bcf714df4260049440612dcbead20f40",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8030135,
+        "length": 10793
+      }
+    },
+    {
+      "offset": 8041239,
+      "length": 19888,
+      "hash": "f691904de3c94c8befb8532e5f8e09ed62b755cedaea2ad05eb05f8f5085d513",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8040928,
+        "length": 19888
+      }
+    },
+    {
+      "offset": 8061127,
+      "length": 45461,
+      "hash": "cfc519e8516bfc6b92706966adac63a2e3656005e339ceda0a125b36a8b37da9",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8060816,
+        "length": 45461
+      }
+    },
+    {
+      "offset": 8106588,
+      "length": 43655,
+      "hash": "ff048c7ae5647a6c24c0967d398b88267d9ebffe1469fb244d57f87e7b11b908",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8106277,
+        "length": 43655
+      }
+    },
+    {
+      "offset": 8150243,
+      "length": 25691,
+      "hash": "7ef9ada7979a29b2e06f4793fed4ca991c4cde7ea40e165a39d96ece4a6d43a3",
+      "local_source": null
+    },
+    {
+      "offset": 8175934,
+      "length": 62185,
+      "hash": "9432fe90d96ee6bbb7e2d748411893eec32322acc08e7910470ae8d9cb6c4d2a",
+      "local_source": null
+    },
+    {
+      "offset": 8238119,
+      "length": 81301,
+      "hash": "41488d975dde355314aa0d76e3851c70c7a88ca5cf0f3f4483dce54f93c9f259",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8237690,
+        "length": 81301
+      }
+    },
+    {
+      "offset": 8319420,
+      "length": 26893,
+      "hash": "af99034a22ff14a88eeb86b4731957ab90c6b2f4f23623cb372d987626ede278",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8318991,
+        "length": 26893
+      }
+    },
+    {
+      "offset": 8346313,
+      "length": 15879,
+      "hash": "7a47b846b44c81ef61c34b2e3b7128be81ee25c819ea3525525ea3ffce0cfe08",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8345884,
+        "length": 15879
+      }
+    },
+    {
+      "offset": 8362192,
+      "length": 32104,
+      "hash": "e7e06013531ddf7cf47d53f0bd1fdc33140d9d78439101a5ea34f88afc3a9f02",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8361763,
+        "length": 32104
+      }
+    },
+    {
+      "offset": 8394296,
+      "length": 53320,
+      "hash": "c3dbd6f19c5eb7eeba6c2c706dc0e4092b3d83410c7999172596c61c6f2fcb85",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8393867,
+        "length": 53320
+      }
+    },
+    {
+      "offset": 8447616,
+      "length": 32948,
+      "hash": "99bd7834533b4d3da4c448d55806b2a25d45a17945266079f17abba2f594fcec",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8447187,
+        "length": 32948
+      }
+    },
+    {
+      "offset": 8480564,
+      "length": 42300,
+      "hash": "a1f9a6e39f85a684973bca2fbaaf39ecd94487ae8698fc999f4c543b361fd04c",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8480135,
+        "length": 42300
+      }
+    },
+    {
+      "offset": 8522864,
+      "length": 85495,
+      "hash": "ce39510f78936400efc7abceb984b36c6344f4b751e1005f4e2bfbf855a90183",
+      "local_source": null
+    },
+    {
+      "offset": 8608359,
+      "length": 43546,
+      "hash": "94e78c142f947d42baccaa17ebc1cc61777a56129f02160e54c62d9089a17ea0",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8607739,
+        "length": 43546
+      }
+    },
+    {
+      "offset": 8651905,
+      "length": 12879,
+      "hash": "065b8cfd558d9d83ab9bf8b58b66edf81f0791f2033acc693d39d0014e6afafc",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8651285,
+        "length": 12879
+      }
+    },
+    {
+      "offset": 8664784,
+      "length": 26990,
+      "hash": "64d3b93d8d76e0224e5fc08690ca8e00392dfa9b84bb06d6b6e32ee0c93fc295",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8664164,
+        "length": 26990
+      }
+    },
+    {
+      "offset": 8691774,
+      "length": 25526,
+      "hash": "d9a00499679ac9e8631daad2be0ed6626c24eff7473c22b46e972f6704a80f7f",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8691154,
+        "length": 25526
+      }
+    },
+    {
+      "offset": 8717300,
+      "length": 36566,
+      "hash": "4c609786da4f683ddc1d21ab3e61e90ba0f12bae67a707a043f60a88722f59e6",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8716680,
+        "length": 36566
+      }
+    },
+    {
+      "offset": 8753866,
+      "length": 22960,
+      "hash": "95dcf0cf36aca870acdb9d67b2402760e48441b6494e23e3a56fc205d4b9e1f7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8753246,
+        "length": 22960
+      }
+    },
+    {
+      "offset": 8776826,
+      "length": 35111,
+      "hash": "388ecfa6447050eef9ae362ee69984310b4b7b6168c4565668008224c765a3c3",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8776206,
+        "length": 35111
+      }
+    },
+    {
+      "offset": 8811937,
+      "length": 14688,
+      "hash": "ce47e46da36408864e216f5f51d31c5543e00511f53f536caf5090491a8c81b2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8811317,
+        "length": 14688
+      }
+    },
+    {
+      "offset": 8826625,
+      "length": 12797,
+      "hash": "6793e94152622825b4a159febe9c7970c27f7152c9ce7c6c9f25c193ad4c52d7",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8826005,
+        "length": 12797
+      }
+    },
+    {
+      "offset": 8839422,
+      "length": 58109,
+      "hash": "c0ee3652e24a5bf4e358e82d541fa87fa20a148b59aa6574698f234faca18d26",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8838802,
+        "length": 58109
+      }
+    },
+    {
+      "offset": 8897531,
+      "length": 40373,
+      "hash": "fd8e31f6a930a3aa274159a9bd0e77081949b63fe51886c45becf645e9ab7d27",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 8896911,
+        "length": 40373
+      }
+    },
+    {
+      "offset": 8937904,
+      "length": 55844,
+      "hash": "659287d6400e49b788b7ddf80b8fd25a8c0164c738e1d65bfc56793793a56752",
+      "local_source": null
+    },
+    {
+      "offset": 8993748,
+      "length": 47120,
+      "hash": "dfdc19caa6ea03f8b48fe0c12305041e2cb962e349a2614b024eef5b859610a0",
+      "local_source": null
+    },
+    {
+      "offset": 9040868,
+      "length": 38486,
+      "hash": "7a2ccda526d572fd7da4cd912e0eb4f60398bb98de0676d9bd9555e4674fedf4",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9039963,
+        "length": 38486
+      }
+    },
+    {
+      "offset": 9079354,
+      "length": 36104,
+      "hash": "88b1046d086dfcc9805fbb7bd25e1530982d41fe5da5d1e583befe56a3900b42",
+      "local_source": null
+    },
+    {
+      "offset": 9115458,
+      "length": 20560,
+      "hash": "c8461f82fb2aa27fe287dd881c1db3ac77fd591f395a995d328780fa068ea220",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9114554,
+        "length": 20560
+      }
+    },
+    {
+      "offset": 9136018,
+      "length": 74570,
+      "hash": "6804a6ffb6540ea625e3bde72a6b421bdc53959965a2514ad986eb9d37308802",
+      "local_source": null
+    },
+    {
+      "offset": 9210588,
+      "length": 33426,
+      "hash": "b34ab1c50c5885337eeb144879b28d4ebad883b9e88b072e0af0b9279e1f37f6",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9209669,
+        "length": 33426
+      }
+    },
+    {
+      "offset": 9244014,
+      "length": 51154,
+      "hash": "7e255a7cab980474f08154c42ce72b9b4364edb4cab7f5548a91ac375a3339e2",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9243095,
+        "length": 51154
+      }
+    },
+    {
+      "offset": 9295168,
+      "length": 11679,
+      "hash": "0475347481d6b3308539251fb276444023dee6586a84803a67c80758bdbbf2ae",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9294249,
+        "length": 11679
+      }
+    },
+    {
+      "offset": 9306847,
+      "length": 8552,
+      "hash": "9afaef4b6f799d1d786819fcdc0e4ee591702649a4deddb4f7bf3936ef4d98ce",
+      "local_source": null
+    },
+    {
+      "offset": 9315399,
+      "length": 43037,
+      "hash": "3312707414892e97891ff6fa4f237eb82d26edf7366674aedbe7a27a4f3d1478",
+      "local_source": null
+    },
+    {
+      "offset": 9358436,
+      "length": 48890,
+      "hash": "eb3df980476e33d587df710c07136199b1dc8f2f22a7d36f1a163687bd256377",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9357374,
+        "length": 48890
+      }
+    },
+    {
+      "offset": 9407326,
+      "length": 55224,
+      "hash": "eef59bca20b25c76be8c884fcc2f586a455ff45cbb706d0979ad683c60876c37",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9406264,
+        "length": 55224
+      }
+    },
+    {
+      "offset": 9462550,
+      "length": 44659,
+      "hash": "91383396c36cf8ffa1bb477db4c8fa32ddfc5e15e63d08cf8cf0e15cfc2b947e",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9461488,
+        "length": 44659
+      }
+    },
+    {
+      "offset": 9507209,
+      "length": 8132,
+      "hash": "1813f80b61ebe246786fb6609fa692e38158f483b25b774e36769e521e96e257",
+      "local_source": {
+        "path": "<WORKSPACE>/work/real-benchmark/sqlite/sources/raw/sqlite3-3.53.3.c",
+        "offset": 9506147,
+        "length": 8132
+      }
+    }
+  ]
+}
