@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+
+      - name: Run strict clippy
+        run: cargo +stable clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo +stable test --locked --workspace
+
+      - name: Build release binary
+        run: cargo +stable build --locked --release

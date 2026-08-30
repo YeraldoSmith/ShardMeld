@@ -1,9 +1,14 @@
 # ShardMeld（拾构）
 
+[![CI](https://github.com/YeraldoSmith/ShardMeld/actions/workflows/ci.yml/badge.svg)](https://github.com/YeraldoSmith/ShardMeld/actions/workflows/ci.yml)
+
 Copyright © 2026 YeraldoSmith  
 Licensed under the GNU Affero General Public License v3.0 only.
 
 ShardMeld reconstructs target data from user-authorized local files and identifies only the bytes that are genuinely missing.
+
+Taking over development? Start with [`HANDOFF.md`](HANDOFF.md) for the verified
+baseline, code map, invariants, next priorities, and release checklist.
 
 > Reconstruct first. Transfer only what's missing.  
 > 先重建，只传缺失。
