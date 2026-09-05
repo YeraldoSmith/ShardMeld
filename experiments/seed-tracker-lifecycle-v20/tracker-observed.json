@@ -1,0 +1,24 @@
+{
+  "tracker": "http://127.0.0.1:45991/announce",
+  "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+  "announces": [
+    {
+      "event": "started",
+      "port": 56612,
+      "uploaded": 0,
+      "downloaded": 0,
+      "left": 0,
+      "compact": 1,
+      "numwant": 50
+    },
+    {
+      "event": "stopped",
+      "port": 56612,
+      "uploaded": 0,
+      "downloaded": 0,
+      "left": 0,
+      "compact": 1,
+      "numwant": 50
+    }
+  ]
+}

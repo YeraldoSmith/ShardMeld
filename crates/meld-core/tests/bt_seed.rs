@@ -125,6 +125,78 @@ fn seed_refuses_corrupted_source_and_non_loopback_default() {
 }
 
 #[test]
+fn seed_announces_started_and_stopped_to_torrent_tracker() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(64 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let tracker_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tracker_address = tracker_listener.local_addr().unwrap();
+    let mut torrent = torrent_for(&bytes, 32 * 1024);
+    torrent.announce = Some(format!("http://{tracker_address}/announce?token=private"));
+    let tracker = thread::spawn(move || serve_mock_tracker(tracker_listener, 2));
+
+    let report = serve_v1_file(
+        &torrent,
+        &descriptor,
+        &source,
+        "127.0.0.1:0".parse().unwrap(),
+        false,
+        Some(0),
+    )
+    .unwrap();
+    let requests = tracker.join().unwrap();
+
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].contains("event=started"));
+    assert!(requests[0].contains("left=0"));
+    assert!(requests[0].contains(&format!("port={}", report.bind.port())));
+    assert!(requests[1].contains("event=stopped"));
+    assert!(requests[1].contains("uploaded=0"));
+    assert_eq!(report.tracker_announces.len(), 2);
+    assert!(
+        report
+            .tracker_announces
+            .iter()
+            .all(|attempt| attempt.success)
+    );
+    assert_eq!(
+        report.tracker_announces[0].tracker,
+        format!("http://{tracker_address}/announce?<redacted>")
+    );
+}
+
+#[test]
+fn unavailable_tracker_is_reported_without_disabling_direct_seed() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(64 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let unavailable = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unavailable_address = unavailable.local_addr().unwrap();
+    drop(unavailable);
+    let mut torrent = torrent_for(&bytes, 32 * 1024);
+    torrent.announce = Some(format!("http://{unavailable_address}/announce"));
+
+    let report = serve_v1_file(
+        &torrent,
+        &descriptor,
+        &source,
+        "127.0.0.1:0".parse().unwrap(),
+        false,
+        Some(0),
+    )
+    .unwrap();
+
+    assert_eq!(report.tracker_announces.len(), 1);
+    assert!(!report.tracker_announces[0].success);
+    assert!(report.tracker_announces[0].error.is_some());
+    assert!(report.source_verified);
+}
+
+#[test]
 fn index_seed_reconstructs_pieces_on_demand_from_separate_chunk_files() {
     let root = tempdir().unwrap();
     let bytes = deterministic_bytes(700 * 1024 + 321);
@@ -248,4 +320,31 @@ fn read_message(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     let mut message = vec![0_u8; u32::from_be_bytes(length) as usize];
     stream.read_exact(&mut message).unwrap();
     (message[0], message[1..].to_vec())
+}
+
+fn serve_mock_tracker(listener: TcpListener, count: usize) -> Vec<String> {
+    let mut requests = Vec::new();
+    for _ in 0..count {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let length = stream.read(&mut buffer).unwrap();
+            assert!(length > 0);
+            request.extend_from_slice(&buffer[..length]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        requests.push(String::from_utf8(request).unwrap());
+        let body = b"d8:intervali60e5:peers0:e";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    }
+    requests
 }

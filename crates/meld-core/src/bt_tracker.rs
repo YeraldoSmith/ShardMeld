@@ -46,6 +46,16 @@ pub struct BtDiscoveryAttempt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BtTrackerLifecycleAttempt {
+    pub event: String,
+    pub tracker: String,
+    pub success: bool,
+    pub interval_seconds: Option<u64>,
+    pub warning_message: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BtTrackerFetchReport {
     pub report_format: String,
     pub report_version: u32,
@@ -98,7 +108,7 @@ pub fn fetch_v1_via_tracker(
                 &peer_id,
                 key,
                 announce_port,
-                bridge.missing_bytes,
+                TrackerCounters::new(0, bridge.missing_bytes),
                 TrackerEvent::Started,
             ) {
                 Ok(response) if response.peers.len() <= MAX_TRACKER_PEERS => {
@@ -266,6 +276,105 @@ fn tracker_tiers(torrent: &TorrentV1, tracker_override: Option<&str>) -> Result<
     Ok(tiers)
 }
 
+pub(crate) fn start_seed_trackers(
+    torrent: &TorrentV1,
+    peer_id: &[u8; 20],
+    port: u16,
+) -> (Vec<String>, Vec<BtTrackerLifecycleAttempt>) {
+    let tiers = if let Some(announce_list) = &torrent.announce_list {
+        announce_list.clone()
+    } else if let Some(announce) = &torrent.announce {
+        vec![vec![announce.clone()]]
+    } else {
+        Vec::new()
+    };
+    let key = tracker_key(peer_id);
+    let mut active = Vec::new();
+    let mut attempts = Vec::new();
+    let mut seen = HashSet::new();
+    for (tier_index, tier) in tiers.into_iter().enumerate() {
+        for tracker in shuffled_tier(tier, peer_id, tier_index) {
+            if !seen.insert(tracker.clone()) {
+                continue;
+            }
+            let display = redact_tracker_url(&tracker);
+            match announce(
+                &tracker,
+                torrent,
+                peer_id,
+                key,
+                port,
+                TrackerCounters::new(0, 0),
+                TrackerEvent::Started,
+            ) {
+                Ok(response) => {
+                    attempts.push(BtTrackerLifecycleAttempt {
+                        event: TrackerEvent::Started.http_name().to_owned(),
+                        tracker: display,
+                        success: true,
+                        interval_seconds: Some(response.interval),
+                        warning_message: response.warning_message,
+                        error: None,
+                    });
+                    active.push(tracker);
+                    break;
+                }
+                Err(error) => attempts.push(BtTrackerLifecycleAttempt {
+                    event: TrackerEvent::Started.http_name().to_owned(),
+                    tracker: display,
+                    success: false,
+                    interval_seconds: None,
+                    warning_message: None,
+                    error: Some(format!("{error:#}")),
+                }),
+            }
+        }
+    }
+    (active, attempts)
+}
+
+pub(crate) fn stop_seed_trackers(
+    trackers: &[String],
+    torrent: &TorrentV1,
+    peer_id: &[u8; 20],
+    port: u16,
+    uploaded: u64,
+) -> Vec<BtTrackerLifecycleAttempt> {
+    let key = tracker_key(peer_id);
+    trackers
+        .iter()
+        .map(|tracker| {
+            let display = redact_tracker_url(tracker);
+            match announce(
+                tracker,
+                torrent,
+                peer_id,
+                key,
+                port,
+                TrackerCounters::new(uploaded, 0),
+                TrackerEvent::Stopped,
+            ) {
+                Ok(response) => BtTrackerLifecycleAttempt {
+                    event: TrackerEvent::Stopped.http_name().to_owned(),
+                    tracker: display,
+                    success: true,
+                    interval_seconds: Some(response.interval),
+                    warning_message: response.warning_message,
+                    error: None,
+                },
+                Err(error) => BtTrackerLifecycleAttempt {
+                    event: TrackerEvent::Stopped.http_name().to_owned(),
+                    tracker: display,
+                    success: false,
+                    interval_seconds: None,
+                    warning_message: None,
+                    error: Some(format!("{error:#}")),
+                },
+            }
+        })
+        .collect()
+}
+
 fn shuffled_tier(mut tier: Vec<String>, peer_id: &[u8; 20], tier_index: usize) -> Vec<String> {
     let mut digest = Sha1::new();
     digest.update(peer_id);
@@ -295,7 +404,7 @@ fn stop_trackers(
             peer_id,
             key,
             port,
-            0,
+            TrackerCounters::new(0, 0),
             TrackerEvent::Stopped,
         );
     }
@@ -305,6 +414,18 @@ fn stop_trackers(
 enum TrackerEvent {
     Started,
     Stopped,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrackerCounters {
+    uploaded: u64,
+    left: u64,
+}
+
+impl TrackerCounters {
+    const fn new(uploaded: u64, left: u64) -> Self {
+        Self { uploaded, left }
+    }
 }
 
 impl TrackerEvent {
@@ -329,7 +450,7 @@ fn announce(
     peer_id: &[u8; 20],
     key: u32,
     port: u16,
-    left: u64,
+    counters: TrackerCounters,
     event: TrackerEvent,
 ) -> Result<TrackerResponse> {
     let scheme = tracker
@@ -337,8 +458,8 @@ fn announce(
         .map(|(scheme, _)| scheme.to_ascii_lowercase())
         .context("tracker URL has no scheme")?;
     match scheme.as_str() {
-        "http" | "https" => announce_http(tracker, torrent, peer_id, key, port, left, event),
-        "udp" => announce_udp(tracker, torrent, peer_id, key, port, left, event),
+        "http" | "https" => announce_http(tracker, torrent, peer_id, key, port, counters, event),
+        "udp" => announce_udp(tracker, torrent, peer_id, key, port, counters, event),
         _ => bail!(
             "unsupported tracker scheme {scheme}; ShardMeld 1.1 supports HTTP, HTTPS, and UDP trackers"
         ),
@@ -351,7 +472,7 @@ fn announce_http(
     peer_id: &[u8; 20],
     key: u32,
     port: u16,
-    left: u64,
+    counters: TrackerCounters,
     event: TrackerEvent,
 ) -> Result<TrackerResponse> {
     if tracker.contains('#') {
@@ -360,9 +481,11 @@ fn announce_http(
     let info_hash = decode_info_hash(torrent)?;
     let separator = if tracker.contains('?') { '&' } else { '?' };
     let url = format!(
-        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded=0&downloaded=0&left={left}&compact=1&numwant=50&key={key}&event={}",
+        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded={}&downloaded=0&left={}&compact=1&numwant=50&key={key}&event={}",
         percent_encode_bytes(&info_hash),
         percent_encode_bytes(peer_id),
+        counters.uploaded,
+        counters.left,
         event.http_name(),
     );
     let agent = ureq::Agent::config_builder()
@@ -389,7 +512,7 @@ fn announce_udp(
     peer_id: &[u8; 20],
     key: u32,
     port: u16,
-    left: u64,
+    counters: TrackerCounters,
     event: TrackerEvent,
 ) -> Result<TrackerResponse> {
     let parsed = Url::parse(tracker).context("parse UDP tracker URL")?;
@@ -416,7 +539,7 @@ fn announce_udp(
     }
     let mut failures = Vec::new();
     for address in addresses {
-        match announce_udp_address(address, torrent, peer_id, key, port, left, event) {
+        match announce_udp_address(address, torrent, peer_id, key, port, counters, event) {
             Ok(response) => return Ok(response),
             Err(error) => failures.push(format!("{address}: {error:#}")),
         }
@@ -430,7 +553,7 @@ fn announce_udp_address(
     peer_id: &[u8; 20],
     key: u32,
     port: u16,
-    left: u64,
+    counters: TrackerCounters,
     event: TrackerEvent,
 ) -> Result<TrackerResponse> {
     let bind = if tracker.is_ipv4() {
@@ -463,8 +586,8 @@ fn announce_udp_address(
     request.extend_from_slice(&announce_transaction.to_be_bytes());
     request.extend_from_slice(&info_hash);
     request.extend_from_slice(peer_id);
-    request.extend_from_slice(&0_u64.to_be_bytes());
-    request.extend_from_slice(&left.to_be_bytes());
+    request.extend_from_slice(&counters.uploaded.to_be_bytes());
+    request.extend_from_slice(&counters.left.to_be_bytes());
     request.extend_from_slice(&0_u64.to_be_bytes());
     request.extend_from_slice(&event.udp_value().to_be_bytes());
     request.extend_from_slice(&0_u32.to_be_bytes());

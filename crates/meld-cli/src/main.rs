@@ -696,8 +696,13 @@ fn main() -> Result<()> {
                 max_connections,
             )?;
             save_report(&report, json.as_deref())?;
+            let tracker_failures = report
+                .tracker_announces
+                .iter()
+                .filter(|attempt| !attempt.success)
+                .count();
             println!(
-                "seed_stopped bind={} connections={} handshakes={} requests={} payload={} cancels={} errors={} verified={}",
+                "seed_stopped bind={} connections={} handshakes={} requests={} payload={} cancels={} errors={} tracker_announces={} tracker_failures={} verified={}",
                 report.bind,
                 report.connections,
                 report.successful_handshakes,
@@ -705,6 +710,8 @@ fn main() -> Result<()> {
                 report.payload_bytes_sent,
                 report.cancel_messages_received,
                 report.protocol_errors,
+                report.tracker_announces.len(),
+                tracker_failures,
                 report.source_verified
             );
         }
@@ -739,8 +746,13 @@ fn main() -> Result<()> {
                 max_connections,
             )?;
             save_report(&report, json.as_deref())?;
+            let tracker_failures = report
+                .tracker_announces
+                .iter()
+                .filter(|attempt| !attempt.success)
+                .count();
             println!(
-                "index_seed_stopped bind={} advertised={}/{} connections={} handshakes={} requests={} payload={} local_chunks={} local_bytes={} errors={}",
+                "index_seed_stopped bind={} advertised={}/{} connections={} handshakes={} requests={} payload={} local_chunks={} local_bytes={} errors={} tracker_announces={} tracker_failures={}",
                 report.bind,
                 report.advertised_pieces,
                 report.total_pieces,
@@ -750,7 +762,9 @@ fn main() -> Result<()> {
                 report.payload_bytes_sent,
                 report.on_demand_local_chunks_read,
                 report.on_demand_local_bytes_read,
-                report.protocol_errors
+                report.protocol_errors,
+                report.tracker_announces.len(),
+                tracker_failures
             );
         }
         Command::StageMissing {

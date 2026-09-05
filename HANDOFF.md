@@ -8,8 +8,9 @@ repository. The canonical repository is
 
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 61 tests. The original 37 BT/CDC tests remain in
-  place; SMD adds 24 unit, invariant, persistence, and real CLI-process tests.
+- Automated verification: 63 tests. The BT/CDC suite has 39 tests, including
+  the original 37; SMD adds 24 unit, invariant, persistence, and real
+  CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
   strict clippy, all tests, and a locked release build for every push and pull
   request. Pinning prevents a new stable Clippy lint from invalidating an
@@ -91,6 +92,8 @@ currently implements:
   is supplied;
 - verified full-file upload seeding;
 - on-demand upload of Pieces reconstructed from the authorized local index.
+- best-effort seed-side HTTP(S)/UDP Tracker `started` and clean-exit `stopped`
+  announces with redacted reports;
 - isolated SMD v0.1 devnet wallets and account-model transfers;
 - SQLite atomic ledger, permanent reserve, and fixed capped supply;
 - signed useful-contribution receipts, anti-replay checks, deterministic
@@ -101,9 +104,10 @@ currently implements:
 
 Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
 multi-file torrents, and GUI work. Upload connections are currently serial and
-upload Tracker registration is manual. SMD mainnet, mainnet wallet recovery,
-distributed consensus, mature Sybil resistance, real pricing, paid downloads,
-exchange integration, and real-asset value are also explicitly deferred.
+Tracker `stopped` delivery requires a clean seed exit. SMD mainnet, mainnet
+wallet recovery, distributed consensus, mature Sybil resistance, real pricing,
+paid downloads, exchange integration, and real-asset value are also explicitly
+deferred.
 
 ## Invariants that must not regress
 
@@ -140,7 +144,8 @@ exchange integration, and real-asset value are also explicitly deferred.
 
 The lowest-risk continuation of the BT-compatibility strategy is:
 
-1. add automatic started/completed/stopped Tracker announces for upload seeds;
+1. emit `completed` when a downloader actually transitions to a complete seed,
+   and add graceful interrupt handling for seed-side `stopped` announces;
 2. support concurrent upload connections with bounded queues, rate limits, and
    an explicit fairness/choking policy;
 3. add tests with partial index availability and mixed external seeders;

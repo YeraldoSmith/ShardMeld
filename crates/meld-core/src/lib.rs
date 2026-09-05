@@ -22,7 +22,8 @@ pub use bt_seed::{
     serve_v1_index_listener,
 };
 pub use bt_tracker::{
-    BtDiscoveryAttempt, BtTrackerAttempt, BtTrackerFetchReport, fetch_v1_via_tracker,
+    BtDiscoveryAttempt, BtTrackerAttempt, BtTrackerFetchReport, BtTrackerLifecycleAttempt,
+    fetch_v1_via_tracker,
 };
 pub use capabilities::{CapabilitiesReport, REPORT_FORMAT, REPORT_VERSION, capabilities_report};
 pub use chunker::ChunkRecord;

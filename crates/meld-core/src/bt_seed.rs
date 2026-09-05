@@ -10,7 +10,11 @@ use sha1::{Digest, Sha1};
 
 use crate::bittorrent::{plan_v1_bridge, read_verified_chunk};
 use crate::bt_peer::generate_peer_id;
-use crate::{IndexDb, REPORT_FORMAT, REPORT_VERSION, TargetDescriptor, TorrentV1, sha256_file};
+use crate::bt_tracker::{BtTrackerLifecycleAttempt, start_seed_trackers, stop_seed_trackers};
+use crate::{
+    BtBridgeReport, IndexDb, REPORT_FORMAT, REPORT_VERSION, TargetDescriptor, TorrentV1,
+    sha256_file,
+};
 
 const PROTOCOL_NAME: &[u8; 19] = b"BitTorrent protocol";
 const HANDSHAKE_LENGTH: usize = 68;
@@ -44,6 +48,8 @@ pub struct BtSeedReport {
     pub cancel_messages_received: u64,
     pub protocol_errors: u64,
     pub source_verified: bool,
+    #[serde(default)]
+    pub tracker_announces: Vec<BtTrackerLifecycleAttempt>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +73,14 @@ pub struct BtIndexSeedReport {
     pub on_demand_local_bytes_read: u64,
     pub cancel_messages_received: u64,
     pub protocol_errors: u64,
+    #[serde(default)]
+    pub tracker_announces: Vec<BtTrackerLifecycleAttempt>,
+}
+
+struct BtIndexSeedStart {
+    plan: BtBridgeReport,
+    local_peer_id: [u8; 20],
+    max_connections: Option<u64>,
 }
 
 pub fn serve_v1_file(
@@ -80,8 +94,35 @@ pub fn serve_v1_file(
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT seed bind without --allow-non-loopback");
     }
+    let source_sha256 = validate_seed_source(torrent, descriptor, source)?;
     let listener = TcpListener::bind(bind).with_context(|| format!("bind BT seed {bind}"))?;
-    serve_v1_file_listener(listener, torrent, descriptor, source, max_connections)
+    let bind = listener.local_addr()?;
+    let local_peer_id = generate_peer_id()?;
+    let (active_trackers, mut tracker_announces) =
+        start_seed_trackers(torrent, &local_peer_id, bind.port());
+    let result = serve_v1_file_listener_verified(
+        listener,
+        torrent,
+        source,
+        &source_sha256,
+        max_connections,
+        &local_peer_id,
+    );
+    let uploaded = result
+        .as_ref()
+        .map(|report| report.payload_bytes_sent)
+        .unwrap_or(0);
+    tracker_announces.extend(stop_seed_trackers(
+        &active_trackers,
+        torrent,
+        &local_peer_id,
+        bind.port(),
+        uploaded,
+    ));
+    result.map(|mut report| {
+        report.tracker_announces = tracker_announces;
+        report
+    })
 }
 
 pub fn serve_v1_file_listener(
@@ -91,9 +132,27 @@ pub fn serve_v1_file_listener(
     source: &Path,
     max_connections: Option<u64>,
 ) -> Result<BtSeedReport> {
-    validate_seed_source(torrent, descriptor, source)?;
-    let bind = listener.local_addr()?;
+    let source_sha256 = validate_seed_source(torrent, descriptor, source)?;
     let local_peer_id = generate_peer_id()?;
+    serve_v1_file_listener_verified(
+        listener,
+        torrent,
+        source,
+        &source_sha256,
+        max_connections,
+        &local_peer_id,
+    )
+}
+
+fn serve_v1_file_listener_verified(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    source: &Path,
+    source_sha256: &str,
+    max_connections: Option<u64>,
+    local_peer_id: &[u8; 20],
+) -> Result<BtSeedReport> {
+    let bind = listener.local_addr()?;
     let mut report = BtSeedReport {
         report_format: REPORT_FORMAT.to_owned(),
         report_version: REPORT_VERSION,
@@ -101,7 +160,7 @@ pub fn serve_v1_file_listener(
         bind,
         source: source.to_path_buf(),
         info_hash_sha1: torrent.info_hash_sha1.clone(),
-        source_sha256: descriptor.target.sha256.clone(),
+        source_sha256: source_sha256.to_owned(),
         advertised_pieces: torrent.piece_sha1.len() as u64,
         connections: 0,
         successful_handshakes: 0,
@@ -110,6 +169,7 @@ pub fn serve_v1_file_listener(
         cancel_messages_received: 0,
         protocol_errors: 0,
         source_verified: true,
+        tracker_announces: Vec::new(),
     };
 
     while max_connections.is_none_or(|limit| report.connections < limit) {
@@ -117,7 +177,7 @@ pub fn serve_v1_file_listener(
         report.connections += 1;
         stream.set_read_timeout(Some(PEER_TIMEOUT))?;
         stream.set_write_timeout(Some(PEER_TIMEOUT))?;
-        if let Err(error) = serve_peer(&mut stream, torrent, source, &local_peer_id, &mut report) {
+        if let Err(error) = serve_peer(&mut stream, torrent, source, local_peer_id, &mut report) {
             report.protocol_errors += 1;
             if max_connections == Some(1) {
                 return Err(error);
@@ -139,15 +199,42 @@ pub fn serve_v1_index(
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT index seed bind without --allow-non-loopback");
     }
+    let plan = plan_v1_bridge(torrent, descriptor, index)?;
+    if !plan.pieces.iter().any(|piece| piece.fully_local) {
+        bail!("authorized index cannot reconstruct any verified torrent Piece");
+    }
     let listener = TcpListener::bind(bind).with_context(|| format!("bind BT index seed {bind}"))?;
-    serve_v1_index_listener(
+    let bind = listener.local_addr()?;
+    let local_peer_id = generate_peer_id()?;
+    let (active_trackers, mut tracker_announces) =
+        start_seed_trackers(torrent, &local_peer_id, bind.port());
+    let result = serve_v1_index_listener_preflighted(
         listener,
         torrent,
         descriptor,
         index,
         index_db,
-        max_connections,
-    )
+        BtIndexSeedStart {
+            plan,
+            local_peer_id,
+            max_connections,
+        },
+    );
+    let uploaded = result
+        .as_ref()
+        .map(|report| report.payload_bytes_sent)
+        .unwrap_or(0);
+    tracker_announces.extend(stop_seed_trackers(
+        &active_trackers,
+        torrent,
+        &local_peer_id,
+        bind.port(),
+        uploaded,
+    ));
+    result.map(|mut report| {
+        report.tracker_announces = tracker_announces;
+        report
+    })
 }
 
 pub fn serve_v1_index_listener(
@@ -159,12 +246,39 @@ pub fn serve_v1_index_listener(
     max_connections: Option<u64>,
 ) -> Result<BtIndexSeedReport> {
     let plan = plan_v1_bridge(torrent, descriptor, index)?;
-    let available: Vec<bool> = plan.pieces.iter().map(|piece| piece.fully_local).collect();
-    if !available.iter().any(|available| *available) {
+    if !plan.pieces.iter().any(|piece| piece.fully_local) {
         bail!("authorized index cannot reconstruct any verified torrent Piece");
     }
-    let bind = listener.local_addr()?;
     let local_peer_id = generate_peer_id()?;
+    serve_v1_index_listener_preflighted(
+        listener,
+        torrent,
+        descriptor,
+        index,
+        index_db,
+        BtIndexSeedStart {
+            plan,
+            local_peer_id,
+            max_connections,
+        },
+    )
+}
+
+fn serve_v1_index_listener_preflighted(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    index_db: &Path,
+    start: BtIndexSeedStart,
+) -> Result<BtIndexSeedReport> {
+    let available: Vec<bool> = start
+        .plan
+        .pieces
+        .iter()
+        .map(|piece| piece.fully_local)
+        .collect();
+    let bind = listener.local_addr()?;
     let mut report = BtIndexSeedReport {
         report_format: REPORT_FORMAT.to_owned(),
         report_version: REPORT_VERSION,
@@ -173,10 +287,10 @@ pub fn serve_v1_index_listener(
         index_db: index_db.to_path_buf(),
         info_hash_sha1: torrent.info_hash_sha1.clone(),
         target_sha256: descriptor.target.sha256.clone(),
-        total_pieces: plan.total_pieces,
-        advertised_pieces: plan.fully_local_pieces,
-        advertised_piece_bytes: plan.fully_reconstructable_piece_bytes,
-        preflight_locally_covered_bytes: plan.locally_covered_bytes,
+        total_pieces: start.plan.total_pieces,
+        advertised_pieces: start.plan.fully_local_pieces,
+        advertised_piece_bytes: start.plan.fully_reconstructable_piece_bytes,
+        preflight_locally_covered_bytes: start.plan.locally_covered_bytes,
         connections: 0,
         successful_handshakes: 0,
         block_requests: 0,
@@ -185,9 +299,13 @@ pub fn serve_v1_index_listener(
         on_demand_local_bytes_read: 0,
         cancel_messages_received: 0,
         protocol_errors: 0,
+        tracker_announces: Vec::new(),
     };
 
-    while max_connections.is_none_or(|limit| report.connections < limit) {
+    while start
+        .max_connections
+        .is_none_or(|limit| report.connections < limit)
+    {
         let (mut stream, _) = listener.accept().context("accept BT index seed peer")?;
         report.connections += 1;
         stream.set_read_timeout(Some(PEER_TIMEOUT))?;
@@ -198,11 +316,11 @@ pub fn serve_v1_index_listener(
             descriptor,
             index,
             &available,
-            &local_peer_id,
+            &start.local_peer_id,
             &mut report,
         ) {
             report.protocol_errors += 1;
-            if max_connections == Some(1) {
+            if start.max_connections == Some(1) {
                 return Err(error);
             }
         }
@@ -214,7 +332,7 @@ fn validate_seed_source(
     torrent: &TorrentV1,
     descriptor: &TargetDescriptor,
     source: &Path,
-) -> Result<()> {
+) -> Result<String> {
     descriptor.validate()?;
     if torrent.total_length != descriptor.target.size {
         bail!("torrent/descriptor size mismatch for BT seed");
@@ -239,7 +357,7 @@ fn validate_seed_source(
             bail!("BT seed source Piece {index} SHA-1 mismatch");
         }
     }
-    Ok(())
+    Ok(source_sha256)
 }
 
 fn serve_peer(

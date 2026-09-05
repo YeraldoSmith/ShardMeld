@@ -1,0 +1,35 @@
+{
+  "report_format": "shardmeld-report",
+  "report_version": 1,
+  "engine_version": "2.0.0",
+  "bind": "127.0.0.1:56612",
+  "source": "experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-upload-v12/downloaded-by-qbittorrent.bin",
+  "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+  "source_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "advertised_pieces": 37,
+  "connections": 0,
+  "successful_handshakes": 0,
+  "block_requests": 0,
+  "payload_bytes_sent": 0,
+  "cancel_messages_received": 0,
+  "protocol_errors": 0,
+  "source_verified": true,
+  "tracker_announces": [
+    {
+      "event": "started",
+      "tracker": "http://127.0.0.1:45991/announce",
+      "success": true,
+      "interval_seconds": 60,
+      "warning_message": null,
+      "error": null
+    },
+    {
+      "event": "stopped",
+      "tracker": "http://127.0.0.1:45991/announce",
+      "success": true,
+      "interval_seconds": 60,
+      "warning_message": null,
+      "error": null
+    }
+  ]
+}

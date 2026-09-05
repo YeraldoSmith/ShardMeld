@@ -257,6 +257,20 @@ This controlled material layout proves the indexed upload path, not a storage
 savings ratio. The complete target was intentionally transformed into separate
 material files for the test.
 
+## ShardMeld 2.0 hardening: seed Tracker lifecycle
+
+A real loopback HTTP Tracker test observed a complete seed announce
+`event=started`, `left=0`, and the seed listener's actual bound port, followed
+by `event=stopped` on clean exit. A private query parameter in the Tracker URL
+was retained for the request but redacted from the report. A separate test
+proved that an unavailable Tracker is reported without disabling direct seed
+operation. Pre-existing seeds do not send `completed`, whose BitTorrent meaning
+is a downloader transition from incomplete to complete.
+
+This verifies protocol encoding and lifecycle wiring against a controlled
+local Tracker. It is not evidence of public-Tracker reachability, NAT traversal,
+or delivery of `stopped` after forced process termination.
+
 ## Fixture
 
 - Local source: deterministic 16 MiB `base-v1.bin`.
@@ -329,8 +343,8 @@ resistance, distributed consensus, mainnet safety, or monetary value.
 
 ## Automated verification
 
-Sixty-one automated tests passed. The original thirty-seven CDC and
-BitTorrent tests remain unchanged and passing. The additional SMD tests cover:
+Sixty-three automated tests passed: thirty-nine CDC and BitTorrent tests,
+including the original thirty-seven, plus twenty-four SMD tests. The SMD tests cover:
 
 - stable, distinct, checksummed devnet wallet addresses and backup round trips;
 - domain-separated Ed25519 signature acceptance and tamper rejection;
@@ -407,4 +421,4 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 - Platform: macOS Apple Silicon (`arm64`).
 - Version: `shardmeld 2.0.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `225be1c4b198c9d5353dc3bc7cdf631ee8e125f9e5e89fbe7983fb862369fff7`.
+- SHA-256: `7fb9b430bc4915b68af36eccb5cdd54f55136615d3f62929a9b67722f85a8738`.

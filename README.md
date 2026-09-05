@@ -15,7 +15,7 @@ baseline, code map, invariants, next priorities, and release checklist.
 
 Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. Peer metadata exchange and DHT remain deferred, as do background scanning and GUI work.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种和本地索引按需重建做种均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 61 项自动化测试通过，其中原有 37 项 BT/CDC 测试保持通过。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种、本地索引按需重建做种和做种端 Tracker 自动注册均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 63 项自动化测试通过，其中 39 项覆盖 BT/CDC（包含原有 37 项），24 项覆盖 SMD。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
 
 ## Run the delivered macOS binary
 
@@ -167,6 +167,12 @@ shardmeld bt-seed-index \
 Both seed commands bind to loopback by default. `bt-seed-file` verifies the
 entire file and every Piece before listening. `bt-seed-index` performs a
 preflight Piece reconstruction and advertises no partially available Piece.
+When the torrent contains HTTP(S) or UDP Tracker metadata, both commands make
+best-effort `started` and clean-exit `stopped` announces using the actual bound
+port. Tracker failures are recorded in the JSON report but do not disable
+direct peer connections. Private Tracker query strings are redacted. A
+pre-existing complete seed correctly does not emit BitTorrent's `completed`
+event; that event belongs to a downloader's incomplete-to-complete transition.
 
 ## SMD v0.1 Devnet economy layer
 
@@ -261,6 +267,7 @@ are intentionally deferred. See
 - The SQLite index and JSON reports can contain local file paths; keep them private unless paths are sanitized.
 - The chunk server binds to loopback by default; non-loopback exposure requires an explicit flag.
 - Both BT seed commands also bind to loopback by default. Non-loopback use is an explicit trusted-network choice.
+- Seed Tracker registration is best-effort; a `stopped` event requires a clean command exit.
 - SMD v0.1 is a local devnet experiment; it has no real-money value or mainnet.
 - Existing BT/CDC paths never create wallets, open an SMD ledger, or issue rewards automatically.
 
@@ -278,6 +285,7 @@ The 1.0 stable-report release result is in `experiments/sqlite-3.53.3-to-3.53.4/
 The 1.1 magnet-binding result is in `experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-magnet-v11/README.md`.
 The 1.2 qBittorrent download-from-ShardMeld result is in `experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-upload-v12/README.md`.
 The 2.0 indexed on-demand seed result is in `experiments/sqlite-3.53.3-to-3.53.4/qbittorrent-5.0.5-index-seed-v20/README.md`.
+The packaged seed Tracker lifecycle result is in `experiments/seed-tracker-lifecycle-v20/README.md`.
 
 ## Copyright and license
 

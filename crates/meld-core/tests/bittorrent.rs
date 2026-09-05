@@ -1,6 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use meld_core::{
@@ -665,7 +666,7 @@ fn endgame_sends_cancel_for_losing_duplicate_requests() {
     let root = tempdir().unwrap();
     let sources = root.path().join("sources");
     fs::create_dir_all(&sources).unwrap();
-    let target_bytes = deterministic_bytes(256 * 1024);
+    let target_bytes = deterministic_bytes(512 * 1024);
     let target = root.path().join("target.bin");
     fs::write(&target, &target_bytes).unwrap();
 
@@ -688,13 +689,17 @@ fn endgame_sends_cancel_for_losing_duplicate_requests() {
     let mut index = IndexDb::open(&root.path().join("index.db")).unwrap();
     index.index_directory(&sources, profile).unwrap();
     let torrent = load_v1_torrent(&torrent_path).unwrap();
+    let (slow_ready_tx, slow_ready_rx) = mpsc::channel();
     let slow_torrent = torrent.clone();
     let slow_target = target_bytes.clone();
-    let slow =
-        thread::spawn(move || serve_endgame_slow_peer(slow_listener, slow_torrent, slow_target));
+    let slow = thread::spawn(move || {
+        serve_endgame_slow_peer(slow_listener, slow_torrent, slow_target, slow_ready_tx)
+    });
     let fast_torrent = torrent.clone();
     let fast_target = target_bytes.clone();
-    let fast = thread::spawn(move || serve_standard_peer(fast_listener, fast_torrent, fast_target));
+    let fast = thread::spawn(move || {
+        serve_endgame_fast_peer(fast_listener, fast_torrent, fast_target, slow_ready_rx)
+    });
     let tracker = thread::spawn(move || {
         serve_mock_tracker(tracker_listener, [slow_address, fast_address], 2)
     });
@@ -706,7 +711,7 @@ fn endgame_sends_cancel_for_losing_duplicate_requests() {
     tracker.join().unwrap();
 
     assert_eq!(fs::read(output).unwrap(), target_bytes);
-    assert_eq!(report.transfer.newly_verified_pieces, 1);
+    assert_eq!(report.transfer.newly_verified_pieces, 2);
     assert_eq!(report.transfer.endgame_duplicate_pieces, 1);
     assert_eq!(report.transfer.endgame_cancelled_jobs, 1);
     assert_eq!(report.transfer.endgame_cancel_messages, 15);
@@ -990,6 +995,48 @@ fn serve_standard_peer(listener: TcpListener, torrent: TorrentV1, target: Vec<u8
     (requests, bytes)
 }
 
+fn serve_endgame_fast_peer(
+    listener: TcpListener,
+    torrent: TorrentV1,
+    target: Vec<u8>,
+    slow_piece_ready: Receiver<()>,
+) {
+    let (mut stream, _) = listener.accept().unwrap();
+    peer_handshake(&mut stream, &torrent);
+    let (message, payload) = read_peer_message(&mut stream);
+    assert_eq!(message, 2);
+    assert!(payload.is_empty());
+    send_peer_bitfield(&mut stream, torrent.piece_sha1.len());
+    send_peer_message(&mut stream, 1, &[]);
+
+    let mut waited_for_slow_piece = false;
+    while let Ok((message, payload)) = try_read_peer_message(&mut stream) {
+        if message == 3 {
+            break;
+        }
+        assert_eq!(message, 6);
+        assert_eq!(payload.len(), 12);
+        let piece = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+        let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+        let length = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+        if piece == 0 && !waited_for_slow_piece {
+            slow_piece_ready
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            waited_for_slow_piece = true;
+        }
+        let absolute = u64::from(piece) * torrent.piece_length + u64::from(begin);
+        let block = &target[absolute as usize..absolute as usize + length as usize];
+        let mut response = Vec::with_capacity(8 + block.len());
+        response.extend_from_slice(&piece.to_be_bytes());
+        response.extend_from_slice(&begin.to_be_bytes());
+        response.extend_from_slice(block);
+        if try_send_peer_message(&mut stream, 7, &response).is_err() {
+            break;
+        }
+    }
+}
+
 fn serve_delayed_peer(
     listener: TcpListener,
     torrent: TorrentV1,
@@ -1096,13 +1143,18 @@ fn serve_stalled_peer(listener: TcpListener, torrent: TorrentV1, target: Vec<u8>
     thread::sleep(std::time::Duration::from_secs(6));
 }
 
-fn serve_endgame_slow_peer(listener: TcpListener, torrent: TorrentV1, target: Vec<u8>) -> u64 {
+fn serve_endgame_slow_peer(
+    listener: TcpListener,
+    torrent: TorrentV1,
+    target: Vec<u8>,
+    ready: Sender<()>,
+) -> u64 {
     let (mut stream, _) = listener.accept().unwrap();
     peer_handshake(&mut stream, &torrent);
     let (message, payload) = read_peer_message(&mut stream);
     assert_eq!(message, 2);
     assert!(payload.is_empty());
-    send_peer_bitfield(&mut stream, torrent.piece_sha1.len());
+    send_peer_selected_bitfield(&mut stream, &[true, false]);
     send_peer_message(&mut stream, 1, &[]);
 
     let mut requests = Vec::new();
@@ -1116,8 +1168,10 @@ fn serve_endgame_slow_peer(listener: TcpListener, torrent: TorrentV1, target: Ve
             u32::from_be_bytes(payload[8..12].try_into().unwrap()),
         ));
     }
-    thread::sleep(std::time::Duration::from_millis(50));
     let (piece, begin, length) = requests[0];
+    assert_eq!(piece, 0);
+    ready.send(()).unwrap();
+    thread::sleep(std::time::Duration::from_millis(50));
     let absolute = u64::from(piece) * torrent.piece_length + u64::from(begin);
     let block = &target[absolute as usize..absolute as usize + length as usize];
     let mut response = Vec::with_capacity(8 + block.len());
