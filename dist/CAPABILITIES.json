@@ -24,7 +24,9 @@
     "smd-v0.1-signed-contribution-receipts",
     "smd-v0.1-useful-contribution-rewards",
     "smd-v0.1-decreasing-emission",
-    "smd-v0.1-free-lane"
+    "smd-v0.1-free-lane",
+    "smd-macos-keychain-wallets",
+    "smd-ledger-state-audit"
   ],
   "deferred": [
     "dht",
@@ -34,7 +36,7 @@
     "multi-file-torrents",
     "gui",
     "smd-mainnet",
-    "smd-production-wallet-storage",
+    "smd-mainnet-wallet-recovery",
     "smd-distributed-consensus",
     "smd-sybil-resistant-rewards",
     "smd-real-money-exchange",

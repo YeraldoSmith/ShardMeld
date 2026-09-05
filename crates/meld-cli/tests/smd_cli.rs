@@ -127,6 +127,9 @@ fn cli_completes_devnet_economy_flow_and_persists_state() {
     let status = success(&["smd", "ledger", "status", "--ledger", path(&ledger)]);
     assert!(status.contains("transactions=2"));
     assert!(status.contains("receipts=1"));
+    let audit = success(&["smd", "ledger", "audit", "--ledger", path(&ledger)]);
+    assert!(audit.contains("state_root_sha256="));
+    assert!(audit.contains("invariants_valid=true"));
 
     success(&[
         "smd",

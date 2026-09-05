@@ -342,6 +342,41 @@ fn restart_preserves_balances_nonces_supply_and_history() {
 }
 
 #[test]
+fn ledger_audit_root_is_stable_across_restart_and_changes_with_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("smd.db");
+    let genesis_root = {
+        let ledger = Ledger::open(&path, NetworkId::Devnet).unwrap();
+        let audit = ledger.audit().unwrap();
+        assert!(audit.invariants_valid);
+        assert_eq!(audit.state_root_sha256.len(), 64);
+        audit.state_root_sha256
+    };
+    let provider = wallet(33);
+    let receiver = wallet(34);
+    let changed_root = {
+        let mut ledger = Ledger::open(&path, NetworkId::Devnet).unwrap();
+        reward_provider(&mut ledger, &provider, &receiver, 1);
+        ledger.audit().unwrap().state_root_sha256
+    };
+    assert_ne!(genesis_root, changed_root);
+    let reopened = Ledger::open(&path, NetworkId::Devnet).unwrap();
+    assert_eq!(reopened.audit().unwrap().state_root_sha256, changed_root);
+    drop(reopened);
+
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE reward_receipts SET receipt_json = receipt_json || ' '",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    let tampered = Ledger::open(&path, NetworkId::Devnet).unwrap();
+    assert_ne!(tampered.audit().unwrap().state_root_sha256, changed_root);
+}
+
+#[test]
 fn reserve_balance_never_decreases() {
     let directory = tempfile::tempdir().unwrap();
     let mut ledger = open_ledger(&directory);

@@ -23,12 +23,16 @@ pub use consensus::{ConsensusEngine, DevnetAuthorityConsensus};
 pub use contribution::{ContributionReceipt, ServiceType};
 pub use devnet::{DevnetScenarioReport, run_devnet_scenario};
 pub use emission::{EmissionQuote, VersionedEmissionPolicy};
-pub use ledger::{Account, Ledger, LedgerStatus, RewardReceiptRecord, TransactionRecord};
+pub use ledger::{
+    Account, Ledger, LedgerAuditReport, LedgerStatus, RewardReceiptRecord, TransactionRecord,
+};
 pub use pricing::{FreeLanePolicy, ProtocolPricingEngine, V01FreeLanePolicy, V01PricingEngine};
 pub use rewards::{AntiFraudPolicy, RewardSummary};
 pub use supply::{GENESIS_RESERVE, MAX_NETWORK_EMISSION, MAX_SUPPLY, SupplyState};
 pub use transaction::Transaction;
-pub use wallet::{DEVNET_WALLET_FILE_KIND, Wallet, WalletBackup};
+pub use wallet::{
+    DEVNET_WALLET_FILE_KIND, MacOsKeychainWalletStore, Wallet, WalletBackup, WalletStore,
+};
 
 pub const SMD_PROTOCOL_VERSION: u32 = 1;
 pub const SMD_SYMBOL: &str = "SMD";

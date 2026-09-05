@@ -8,8 +8,8 @@ repository. The canonical repository is
 
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 60 tests. The original 37 BT/CDC tests remain in
-  place; SMD adds 23 unit, invariant, persistence, and real CLI-process tests.
+- Automated verification: 61 tests. The original 37 BT/CDC tests remain in
+  place; SMD adds 24 unit, invariant, persistence, and real CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
   strict clippy, all tests, and a locked release build for every push and pull
   request. Pinning prevents a new stable Clippy lint from invalidating an
@@ -96,10 +96,12 @@ currently implements:
 - signed useful-contribution receipts, anti-replay checks, deterministic
   authority ordering, reward issuance, and cumulative-emission decay;
 - guaranteed free-lane and disabled-pricing interfaces.
+- native macOS Keychain-backed devnet wallets with a separate explicit test-file path;
+- deterministic invariant-checked ledger audit roots.
 
 Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
 multi-file torrents, and GUI work. Upload connections are currently serial and
-upload Tracker registration is manual. SMD mainnet, production wallet storage,
+upload Tracker registration is manual. SMD mainnet, mainnet wallet recovery,
 distributed consensus, mature Sybil resistance, real pricing, paid downloads,
 exchange integration, and real-asset value are also explicitly deferred.
 
@@ -145,10 +147,9 @@ The lowest-risk continuation of the BT-compatibility strategy is:
 4. then consider BEP 9 metadata exchange and DHT;
 5. address multi-file v1 and BT v2/hybrid before building a GUI.
 
-For SMD, keep the v0.1 devnet frozen until its threat model is reviewed. The
-next safe work is a macOS Keychain-backed production wallet abstraction and
-stronger receipt audit/diversity research; neither change authorizes mainnet or
-real-value use.
+For SMD, keep the v0.1 economic rules frozen until its threat model is reviewed.
+The next safe work is stronger receipt audit/diversity research and optional
+hardware-backed signing; neither change authorizes mainnet or real-value use.
 
 Do not promote one of these items to an implemented capability until an
 automated test and, where interoperability is claimed, an unchanged external

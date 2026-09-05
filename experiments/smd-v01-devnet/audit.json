@@ -1,0 +1,16 @@
+{
+  "audit_version": 1,
+  "network_id": "devnet",
+  "state_root_sha256": "4d637400600dc09fa853b2f8bac9c68fef102cfe11e0956c0983a28ace34bd3c",
+  "accounts": 3,
+  "transactions": 2,
+  "contribution_receipts": 1,
+  "epochs": 1,
+  "supply": {
+    "minted_supply": 100002500000000,
+    "network_emitted_supply": 2500000000,
+    "reserve_balance": 100000200000000,
+    "circulating_supply": 2300000000
+  },
+  "invariants_valid": true
+}

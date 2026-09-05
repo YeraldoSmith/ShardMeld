@@ -22,7 +22,9 @@ Observed deterministic state:
 - final reserve: 1,000,002.00000000 SMD;
 - database reopen retained 3 accounts, 2 transactions, and 1 rewarded receipt;
 - minted, emitted, reserve, circulating, and account-sum invariants passed.
+- deterministic audit root after restart:
+  `4d637400600dc09fa853b2f8bac9c68fef102cfe11e0956c0983a28ace34bd3c`.
 
-`scenario.json` stores amounts as integer atomic units. This controlled local
+`scenario.json` and `audit.json` store amounts as integer atomic units. This controlled local
 run proves implementation consistency and persistence only. It does not prove
 public-network consensus, Sybil resistance, market value, or mainnet safety.

@@ -41,6 +41,8 @@ pub fn capabilities_report() -> CapabilitiesReport {
             "smd-v0.1-useful-contribution-rewards".to_owned(),
             "smd-v0.1-decreasing-emission".to_owned(),
             "smd-v0.1-free-lane".to_owned(),
+            "smd-macos-keychain-wallets".to_owned(),
+            "smd-ledger-state-audit".to_owned(),
         ],
         deferred: vec![
             "dht".to_owned(),
@@ -50,7 +52,7 @@ pub fn capabilities_report() -> CapabilitiesReport {
             "multi-file-torrents".to_owned(),
             "gui".to_owned(),
             "smd-mainnet".to_owned(),
-            "smd-production-wallet-storage".to_owned(),
+            "smd-mainnet-wallet-recovery".to_owned(),
             "smd-distributed-consensus".to_owned(),
             "smd-sybil-resistant-rewards".to_owned(),
             "smd-real-money-exchange".to_owned(),

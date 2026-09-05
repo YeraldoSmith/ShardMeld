@@ -15,7 +15,7 @@ baseline, code map, invariants, next priorities, and release checklist.
 
 Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. Peer metadata exchange and DHT remain deferred, as do background scanning and GUI work.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种和本地索引按需重建做种均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 60 项自动化测试通过，其中原有 37 项 BT/CDC 测试保持通过。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种和本地索引按需重建做种均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 61 项自动化测试通过，其中原有 37 项 BT/CDC 测试保持通过。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
 
 ## Run the delivered macOS binary
 
@@ -186,6 +186,18 @@ shardmeld smd wallet create --out ./bob.devnet-wallet.json
 shardmeld smd devnet genesis --ledger ./smd-devnet.db
 ```
 
+On macOS, store a devnet wallet in the native Keychain instead of a plaintext
+test file:
+
+```bash
+shardmeld smd wallet keychain-create --name alice
+shardmeld smd wallet keychain-address --name alice
+shardmeld smd wallet keychain-balance --name alice --ledger ./smd-devnet.db
+```
+
+Keychain entries reject overwrite. `keychain-export-backup` is an explicit
+escape hatch that creates a plaintext devnet backup and prints a warning.
+
 Record one receiver-confirmed contribution and settle its epoch:
 
 ```bash
@@ -221,6 +233,7 @@ shardmeld smd send \
 
 shardmeld smd reserve status --ledger ./smd-devnet.db
 shardmeld smd ledger status --ledger ./smd-devnet.db
+shardmeld smd ledger audit --ledger ./smd-devnet.db --json ./ledger-audit.json
 ```
 
 The deterministic acceptance scenario runs contribution, reward, transfer,
@@ -232,9 +245,11 @@ shardmeld smd devnet scenario --ledger ./fresh-scenario.db --json ./scenario.jso
 
 Devnet test-wallet files contain private keys. They are marked explicitly,
 created with owner-only permissions on Unix, and must not be used as production
-wallets. Production macOS Keychain storage, distributed consensus, Sybil
-resistance, real pricing, mainnet, and exchange integration are intentionally
-deferred. See [`docs/SMD_PROTOCOL_DRAFT.md`](docs/SMD_PROTOCOL_DRAFT.md).
+wallets. Native macOS Keychain storage is available for devnet wallets, while
+mainnet wallet recovery and hardware-backed signing guarantees, distributed
+consensus, Sybil resistance, real pricing, mainnet, and exchange integration
+are intentionally deferred. See
+[`docs/SMD_PROTOCOL_DRAFT.md`](docs/SMD_PROTOCOL_DRAFT.md).
 
 ## Safety boundaries
 

@@ -318,12 +318,18 @@ Bob, and Bob permanently reserved 2.00000000 SMD. After reopening SQLite, the
 ledger retained all three accounts, both transactions, the rewarded receipt,
 and internally consistent supply totals.
 
+The invariant audit produced deterministic state root
+`4d637400600dc09fa853b2f8bac9c68fef102cfe11e0956c0983a28ace34bd3c`
+before and after reopening the ledger. A separate native macOS Keychain smoke
+test created and loaded one temporary devnet wallet, rejected an overwrite,
+then deleted the test entry and confirmed it was no longer readable.
+
 This is a devnet state-machine and persistence result. It does not prove Sybil
 resistance, distributed consensus, mainnet safety, or monetary value.
 
 ## Automated verification
 
-Sixty automated tests passed. The original thirty-seven CDC and
+Sixty-one automated tests passed. The original thirty-seven CDC and
 BitTorrent tests remain unchanged and passing. The additional SMD tests cover:
 
 - stable, distinct, checksummed devnet wallet addresses and backup round trips;
@@ -401,4 +407,4 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 - Platform: macOS Apple Silicon (`arm64`).
 - Version: `shardmeld 2.0.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `41e4405dff6c8be1b0c0bbd17fee8787bbd4ba35ff9a43917a8ecd766ed03683`.
+- SHA-256: `225be1c4b198c9d5353dc3bc7cdf631ee8e125f9e5e89fbe7983fb862369fff7`.

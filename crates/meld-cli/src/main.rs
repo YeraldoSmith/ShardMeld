@@ -15,8 +15,8 @@ use meld_core::{
 use serde::Serialize;
 use smd_core::{
     Address as SmdAddress, Amount as SmdAmount, ContributionReceipt, DevnetAuthorityConsensus,
-    Ledger as SmdLedger, NetworkId as SmdNetworkId, ServiceType, Transaction as SmdTransaction,
-    Wallet as SmdWallet, run_devnet_scenario,
+    Ledger as SmdLedger, MacOsKeychainWalletStore, NetworkId as SmdNetworkId, ServiceType,
+    Transaction as SmdTransaction, Wallet as SmdWallet, WalletStore, run_devnet_scenario,
 };
 
 #[derive(Debug, Parser)]
@@ -256,6 +256,21 @@ enum SmdCommand {
         #[arg(long)]
         expiry_epoch: u64,
     },
+    /// Sign and submit a transfer using a wallet held in macOS Keychain.
+    SendKeychain {
+        #[arg(long)]
+        keychain_wallet: String,
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: SmdAmount,
+        #[arg(long)]
+        epoch: u64,
+        #[arg(long)]
+        expiry_epoch: u64,
+    },
     /// Inspect the independent SMD ledger.
     Ledger {
         #[command(subcommand)]
@@ -321,6 +336,44 @@ enum SmdWalletCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Generate and store a devnet wallet directly in macOS Keychain.
+    KeychainCreate {
+        #[arg(long)]
+        name: String,
+    },
+    /// Print the address of a wallet stored in macOS Keychain.
+    KeychainAddress {
+        #[arg(long)]
+        name: String,
+    },
+    /// Query a Keychain wallet's account in an SMD ledger.
+    KeychainBalance {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        ledger: PathBuf,
+    },
+    /// Explicitly export a Keychain wallet to a plaintext devnet backup.
+    KeychainExportBackup {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Import a validated plaintext devnet backup into a new Keychain entry.
+    KeychainImportBackup {
+        #[arg(long)]
+        backup: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    /// Delete one named SMD devnet wallet from macOS Keychain.
+    KeychainDelete {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -336,6 +389,13 @@ enum SmdLedgerCommand {
         ledger: PathBuf,
         #[arg(long, default_value_t = 100)]
         limit: u32,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+    /// Verify invariants and produce a deterministic ledger-state digest.
+    Audit {
+        #[arg(long)]
+        ledger: PathBuf,
         #[arg(long)]
         json: Option<PathBuf>,
     },
@@ -844,6 +904,60 @@ fn run_smd(command: SmdCommand) -> Result<()> {
                 wallet.export_devnet_test_file(&out)?;
                 println!("wallet={} address={}", out.display(), wallet.address()?);
             }
+            SmdWalletCommand::KeychainCreate { name } => {
+                let store = MacOsKeychainWalletStore;
+                let wallet = SmdWallet::generate(SmdNetworkId::Devnet);
+                store.save_new(&name, &wallet)?;
+                println!(
+                    "keychain_wallet={} address={} storage={}",
+                    name,
+                    wallet.address()?,
+                    store.backend_name()
+                );
+            }
+            SmdWalletCommand::KeychainAddress { name } => {
+                let wallet = MacOsKeychainWalletStore.load(&name)?;
+                println!("{}", wallet.address()?);
+            }
+            SmdWalletCommand::KeychainBalance { name, ledger } => {
+                let wallet = MacOsKeychainWalletStore.load(&name)?;
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let account = ledger.account(&wallet.address()?)?;
+                println!(
+                    "address={} balance={} SMD atomic={} nonce={} storage=macos-keychain",
+                    account.address,
+                    account.balance,
+                    account.balance.atomic(),
+                    account.nonce
+                );
+            }
+            SmdWalletCommand::KeychainExportBackup { name, out } => {
+                let wallet = MacOsKeychainWalletStore.load(&name)?;
+                wallet.export_devnet_test_file(&out)?;
+                println!(
+                    "backup={} address={} warning=plaintext-devnet-private-key",
+                    out.display(),
+                    wallet.address()?
+                );
+            }
+            SmdWalletCommand::KeychainImportBackup { backup, name } => {
+                let wallet = SmdWallet::import_devnet_test_file(&backup)?;
+                let store = MacOsKeychainWalletStore;
+                store.save_new(&name, &wallet)?;
+                println!(
+                    "keychain_wallet={} address={} storage={}",
+                    name,
+                    wallet.address()?,
+                    store.backend_name()
+                );
+            }
+            SmdWalletCommand::KeychainDelete { name, confirm } => {
+                if !confirm {
+                    bail!("refusing to delete Keychain wallet without --confirm");
+                }
+                MacOsKeychainWalletStore.delete(&name)?;
+                println!("deleted_keychain_wallet={name}");
+            }
         },
         SmdCommand::Send {
             wallet,
@@ -862,6 +976,26 @@ fn run_smd(command: SmdCommand) -> Result<()> {
             let transaction_id = ledger.submit_transaction(&transaction, epoch)?;
             println!(
                 "transaction={} from={} to={} amount={} SMD nonce={} accepted_epoch={}",
+                transaction_id, transaction.from, transaction.to, transaction.amount, nonce, epoch
+            );
+        }
+        SmdCommand::SendKeychain {
+            keychain_wallet,
+            ledger,
+            to,
+            amount,
+            epoch,
+            expiry_epoch,
+        } => {
+            let wallet = MacOsKeychainWalletStore.load(&keychain_wallet)?;
+            let to = SmdAddress::parse_for_network(&to, SmdNetworkId::Devnet)?;
+            let mut ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+            let nonce = ledger.account(&wallet.address()?)?.nonce;
+            let transaction =
+                SmdTransaction::signed(&wallet, &to, amount, nonce, epoch, expiry_epoch)?;
+            let transaction_id = ledger.submit_transaction(&transaction, epoch)?;
+            println!(
+                "transaction={} from={} to={} amount={} SMD nonce={} accepted_epoch={} storage=macos-keychain",
                 transaction_id, transaction.from, transaction.to, transaction.amount, nonce, epoch
             );
         }
@@ -901,6 +1035,20 @@ fn run_smd(command: SmdCommand) -> Result<()> {
                         record.accepted_epoch
                     );
                 }
+            }
+            SmdLedgerCommand::Audit { ledger, json } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let audit = ledger.audit()?;
+                save_report(&audit, json.as_deref())?;
+                println!(
+                    "state_root_sha256={} accounts={} transactions={} receipts={} epochs={} invariants_valid={}",
+                    audit.state_root_sha256,
+                    audit.accounts,
+                    audit.transactions,
+                    audit.contribution_receipts,
+                    audit.epochs,
+                    audit.invariants_valid
+                );
             }
         },
         SmdCommand::Reserve { command } => match command {

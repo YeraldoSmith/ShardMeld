@@ -15,6 +15,97 @@ use crate::address::{Address, NetworkId};
 use crate::crypto::decode_array;
 
 pub const DEVNET_WALLET_FILE_KIND: &str = "smd-devnet-test-wallet";
+pub const MACOS_KEYCHAIN_SERVICE: &str = "org.shardmeld.smd.devnet";
+
+pub trait WalletStore {
+    fn backend_name(&self) -> &'static str;
+    fn save_new(&self, name: &str, wallet: &Wallet) -> Result<()>;
+    fn load(&self, name: &str) -> Result<Wallet>;
+    fn delete(&self, name: &str) -> Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MacOsKeychainWalletStore;
+
+impl WalletStore for MacOsKeychainWalletStore {
+    fn backend_name(&self) -> &'static str {
+        "macos-keychain"
+    }
+
+    fn save_new(&self, name: &str, wallet: &Wallet) -> Result<()> {
+        validate_keychain_name(name)?;
+        if wallet.network() != NetworkId::Devnet {
+            bail!("SMD v0.1 Keychain entries are devnet-only");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let entry = keyring::Entry::new(MACOS_KEYCHAIN_SERVICE, name)?;
+            match entry.get_password() {
+                Ok(mut existing) => {
+                    existing.zeroize();
+                    bail!("Keychain wallet already exists: {name}");
+                }
+                Err(keyring::Error::NoEntry) => {}
+                Err(error) => return Err(error.into()),
+            }
+            let mut encoded = serde_json::to_string(&wallet.backup()?)?;
+            let result = entry.set_password(&encoded).map_err(anyhow::Error::from);
+            encoded.zeroize();
+            result
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = wallet;
+            bail!("macOS Keychain wallet storage is unavailable on this platform")
+        }
+    }
+
+    fn load(&self, name: &str) -> Result<Wallet> {
+        validate_keychain_name(name)?;
+        #[cfg(target_os = "macos")]
+        {
+            let entry = keyring::Entry::new(MACOS_KEYCHAIN_SERVICE, name)?;
+            let mut encoded = entry.get_password()?;
+            if encoded.len() > 4096 {
+                encoded.zeroize();
+                bail!("Keychain wallet payload exceeds size limit");
+            }
+            let parsed = serde_json::from_str::<WalletBackup>(&encoded);
+            encoded.zeroize();
+            Wallet::from_backup(parsed?)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            bail!("macOS Keychain wallet storage is unavailable on this platform")
+        }
+    }
+
+    fn delete(&self, name: &str) -> Result<()> {
+        validate_keychain_name(name)?;
+        #[cfg(target_os = "macos")]
+        {
+            let entry = keyring::Entry::new(MACOS_KEYCHAIN_SERVICE, name)?;
+            entry.delete_credential()?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            bail!("macOS Keychain wallet storage is unavailable on this platform")
+        }
+    }
+}
+
+fn validate_keychain_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        bail!("Keychain wallet name must use 1-128 ASCII letters, digits, '.', '-' or '_'");
+    }
+    Ok(())
+}
 
 pub struct Wallet {
     network: NetworkId,

@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction as SqlTransaction, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::address::{Address, NetworkId};
 use crate::amount::Amount;
@@ -49,6 +50,19 @@ pub struct LedgerStatus {
     pub contribution_receipts: u64,
     pub pending_receipts: u64,
     pub supply: SupplyState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LedgerAuditReport {
+    pub audit_version: u32,
+    pub network_id: NetworkId,
+    pub state_root_sha256: String,
+    pub accounts: u64,
+    pub transactions: u64,
+    pub contribution_receipts: u64,
+    pub epochs: u64,
+    pub supply: SupplyState,
+    pub invariants_valid: bool,
 }
 
 pub struct Ledger {
@@ -468,6 +482,196 @@ impl Ledger {
         Ok(())
     }
 
+    pub fn audit(&self) -> Result<LedgerAuditReport> {
+        self.verify_invariants()?;
+        let status = self.status()?;
+        let mut hasher = Sha256::new();
+        hash_field(&mut hasher, b"ShardMeld/SMD/ledger-state/v1\0");
+        hash_field(&mut hasher, self.network.as_str().as_bytes());
+
+        hash_field(&mut hasher, b"metadata");
+        let mut metadata = self
+            .connection
+            .prepare("SELECT key, value FROM metadata ORDER BY key")?;
+        let metadata_rows = metadata.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in metadata_rows {
+            let (key, value) = row?;
+            hash_field(&mut hasher, key.as_bytes());
+            hash_field(&mut hasher, value.as_bytes());
+        }
+
+        hash_field(&mut hasher, b"supply_state");
+        for amount in [
+            status.supply.minted_supply,
+            status.supply.network_emitted_supply,
+            status.supply.reserve_balance,
+            status.supply.circulating_supply,
+        ] {
+            hash_field(&mut hasher, &amount.atomic().to_be_bytes());
+        }
+
+        hash_field(&mut hasher, b"accounts");
+        let mut accounts = self.connection.prepare(
+            "SELECT address, balance, nonce, public_key
+             FROM accounts ORDER BY address",
+        )?;
+        let account_rows = accounts.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        for row in account_rows {
+            let (address, balance, nonce, public_key) = row?;
+            hash_field(&mut hasher, address.as_bytes());
+            hash_field(
+                &mut hasher,
+                &u64_from_sql(balance, "account balance")?.to_be_bytes(),
+            );
+            hash_field(
+                &mut hasher,
+                &u64_from_sql(nonce, "account nonce")?.to_be_bytes(),
+            );
+            hash_optional_field(&mut hasher, public_key.as_deref());
+        }
+
+        hash_field(&mut hasher, b"transactions");
+        let mut transactions = self.connection.prepare(
+            "SELECT transaction_id, transaction_json, from_address, to_address,
+                    amount, nonce, accepted_epoch
+             FROM transactions ORDER BY transaction_id",
+        )?;
+        let transaction_rows = transactions.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })?;
+        for row in transaction_rows {
+            let (id, json, from, to, amount, nonce, accepted_epoch) = row?;
+            for field in [id, json, from, to] {
+                hash_field(&mut hasher, field.as_bytes());
+            }
+            for (value, label) in [
+                (amount, "transaction amount"),
+                (nonce, "transaction nonce"),
+                (accepted_epoch, "transaction accepted epoch"),
+            ] {
+                hash_field(&mut hasher, &u64_from_sql(value, label)?.to_be_bytes());
+            }
+        }
+
+        hash_field(&mut hasher, b"reward_receipts");
+        let mut receipts = self.connection.prepare(
+            "SELECT receipt_id, session_id, provider_address, receiver_address,
+                    content_hash, epoch, receipt_nonce, receipt_json, score_bytes,
+                    protocol_subsidy, user_resource_fee, emission_phase, status
+             FROM reward_receipts ORDER BY receipt_id",
+        )?;
+        let receipt_rows = receipts.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, String>(12)?,
+            ))
+        })?;
+        for row in receipt_rows {
+            let (
+                id,
+                session_id,
+                provider,
+                receiver,
+                content_hash,
+                epoch,
+                nonce,
+                json,
+                score,
+                subsidy,
+                fee,
+                emission_phase,
+                status,
+            ) = row?;
+            for field in [
+                id,
+                session_id,
+                provider,
+                receiver,
+                content_hash,
+                json,
+                status,
+            ] {
+                hash_field(&mut hasher, field.as_bytes());
+            }
+            for (value, label) in [
+                (epoch, "receipt epoch"),
+                (nonce, "receipt nonce"),
+                (score, "receipt score"),
+                (subsidy, "receipt subsidy"),
+                (fee, "receipt fee"),
+            ] {
+                hash_field(&mut hasher, &u64_from_sql(value, label)?.to_be_bytes());
+            }
+            hash_optional_i64(&mut hasher, emission_phase);
+        }
+
+        hash_field(&mut hasher, b"epochs");
+        let mut epochs = self.connection.prepare(
+            "SELECT epoch, receipts_processed, protocol_subsidy FROM epochs ORDER BY epoch",
+        )?;
+        let epoch_rows = epochs.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut epoch_count = 0_u64;
+        for row in epoch_rows {
+            let (epoch, processed, subsidy) = row?;
+            hash_field(&mut hasher, &u64_from_sql(epoch, "epoch")?.to_be_bytes());
+            hash_field(
+                &mut hasher,
+                &u64_from_sql(processed, "processed receipt count")?.to_be_bytes(),
+            );
+            hash_field(
+                &mut hasher,
+                &u64_from_sql(subsidy, "epoch subsidy")?.to_be_bytes(),
+            );
+            epoch_count = epoch_count.checked_add(1).context("epoch count overflow")?;
+        }
+
+        Ok(LedgerAuditReport {
+            audit_version: 1,
+            network_id: self.network,
+            state_root_sha256: hex::encode(hasher.finalize()),
+            accounts: status.accounts,
+            transactions: status.transactions,
+            contribution_receipts: status.contribution_receipts,
+            epochs: epoch_count,
+            supply: status.supply,
+            invariants_valid: true,
+        })
+    }
+
     fn pending_receipts(&self, epoch: u64) -> Result<Vec<ContributionReceipt>> {
         let mut statement = self.connection.prepare(
             "SELECT receipt_json FROM reward_receipts
@@ -726,4 +930,29 @@ fn count(connection: &Connection, table: &str) -> Result<u64> {
     };
     let value: i64 = connection.query_row(sql, [], |row| row.get(0))?;
     u64_from_sql(value, "row count")
+}
+
+fn hash_field(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn hash_optional_field(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_field(hasher, b"some");
+            hash_field(hasher, value.as_bytes());
+        }
+        None => hash_field(hasher, b"none"),
+    }
+}
+
+fn hash_optional_i64(hasher: &mut Sha256, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            hash_field(hasher, b"some");
+            hash_field(hasher, &value.to_be_bytes());
+        }
+        None => hash_field(hasher, b"none"),
+    }
 }

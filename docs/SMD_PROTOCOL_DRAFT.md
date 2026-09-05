@@ -64,12 +64,15 @@ Transactions carry the sender public key. Validation derives the address again
 and rejects mismatches. Private keys are never part of transactions,
 contribution receipts, or ledger tables.
 
-The current CLI deliberately supports only files marked
-`smd-devnet-test-wallet`. They are created with mode `0600` on Unix, are size
-limited on import, redact secrets from debug formatting, and zeroize decoded
-backup secret strings on drop. These files contain private key material and
-must not be treated as production wallets. macOS Keychain storage is deferred
-until a production wallet threat model is approved.
+On macOS, the preferred devnet wallet backend stores the versioned wallet
+secret through the native Keychain using service `org.shardmeld.smd.devnet`.
+Named entries reject silent overwrite. Loading happens locally and the private
+key is never sent to the ledger or network. The CLI also supports explicit
+files marked `smd-devnet-test-wallet`. They are created with mode `0600` on
+Unix, are size limited on import, redact secrets from debug formatting, and
+zeroize encoded backup secrets on drop. These files contain private key
+material and must not be treated as production wallets. Keychain and plaintext
+test-file commands are deliberately separate.
 
 ## 4. Transactions
 
@@ -122,6 +125,12 @@ Foreign keys, schema checks, bounded external serialization, checked Rust
 arithmetic, and atomic SQLite transactions are used together. Opening an
 existing database verifies the supply and account-sum invariants before it is
 used.
+
+`ledger audit` revalidates those invariants and hashes the network, supply,
+ordered accounts and public keys, transaction IDs, reward state, and epoch
+summaries into a domain-separated SHA-256 state root. The root is deterministic
+across process restarts and changes whenever committed ledger state changes. It
+is an audit digest, not a Merkle proof or consensus certificate.
 
 ## 6. Useful contribution receipts
 
@@ -221,8 +230,10 @@ The isolated command group is available under `shardmeld smd`:
 
 ```text
 wallet create|address|balance|receive|export-backup|import-backup
-send
-ledger status|transactions
+wallet keychain-create|keychain-address|keychain-balance
+wallet keychain-export-backup|keychain-import-backup|keychain-delete
+send|send-keychain
+ledger status|transactions|audit
 reserve status
 contribution record|status
 rewards status
@@ -240,7 +251,7 @@ The v0.1 implementation does not provide:
 - a mainnet or public consensus network;
 - complete Sybil resistance;
 - exchange, fiat, or real-asset integration;
-- production key storage or account recovery;
+- mainnet wallet lifecycle, recovery, or hardware-backed signing guarantees;
 - anonymous payments or smart contracts;
 - PoW, DHT-based consensus, or stake;
 - real resource fees, paid downloads, or market pricing;
