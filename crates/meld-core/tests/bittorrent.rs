@@ -1064,7 +1064,9 @@ fn serve_selected_peer(
         response.extend_from_slice(&piece.to_be_bytes());
         response.extend_from_slice(&begin.to_be_bytes());
         response.extend_from_slice(block);
-        send_peer_message(&mut stream, 7, &response);
+        if try_send_peer_message(&mut stream, 7, &response).is_err() {
+            break;
+        }
         bytes += u64::from(length);
     }
     (pieces.len() as u64, bytes)
