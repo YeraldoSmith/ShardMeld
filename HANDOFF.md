@@ -9,8 +9,10 @@ repository. The canonical repository is
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
 - Automated verification: 37 tests.
-- GitHub Actions runs formatting, strict clippy, all tests, and a locked release
-  build for every push and pull request.
+- GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
+  strict clippy, all tests, and a locked release build for every push and pull
+  request. Pinning prevents a new stable Clippy lint from invalidating an
+  otherwise unchanged verified release.
 - Fresh-clone verification completed with Rust/Cargo `1.97.1` using locked
   dependencies. This is a tested toolchain, not a declared minimum supported
   Rust version.
