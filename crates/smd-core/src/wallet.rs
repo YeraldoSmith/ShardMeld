@@ -15,6 +15,7 @@ use crate::address::{Address, NetworkId};
 use crate::crypto::decode_array;
 
 pub const DEVNET_WALLET_FILE_KIND: &str = "smd-devnet-test-wallet";
+#[cfg(target_os = "macos")]
 pub const MACOS_KEYCHAIN_SERVICE: &str = "org.shardmeld.smd.devnet";
 
 pub trait WalletStore {
