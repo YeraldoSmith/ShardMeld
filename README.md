@@ -15,7 +15,7 @@ baseline, code map, invariants, next priorities, and release checklist.
 
 Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. Peer metadata exchange and DHT remain deferred, as do background scanning and GUI work.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种和本地索引按需重建做种均已实现，37 项自动化测试通过。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种和本地索引按需重建做种均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 60 项自动化测试通过，其中原有 37 项 BT/CDC 测试保持通过。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
 
 ## Run the delivered macOS binary
 
@@ -168,6 +168,74 @@ Both seed commands bind to loopback by default. `bt-seed-file` verifies the
 entire file and every Piece before listening. `bt-seed-index` performs a
 preflight Piece reconstruction and advertises no partially available Piece.
 
+## SMD v0.1 Devnet economy layer
+
+> **DEVNET / EXPERIMENTAL — NOT MAINNET — NOT REAL-MONEY READY**
+
+SMD is an isolated, optional economy experiment. Existing CDC, download, and
+seed commands do not open an SMD ledger and do not require a wallet. The v0.1
+flow proves local wallets, signed account transfers, permanent reserve rules,
+fixed supply, receiver-confirmed useful-contribution receipts, deterministic
+reward issuance, decreasing emission, and restart persistence.
+
+Create two explicit devnet test wallets and the genesis ledger:
+
+```bash
+shardmeld smd wallet create --out ./alice.devnet-wallet.json
+shardmeld smd wallet create --out ./bob.devnet-wallet.json
+shardmeld smd devnet genesis --ledger ./smd-devnet.db
+```
+
+Record one receiver-confirmed contribution and settle its epoch:
+
+```bash
+shardmeld smd contribution record \
+  --ledger ./smd-devnet.db \
+  --provider-wallet ./alice.devnet-wallet.json \
+  --receiver-wallet ./bob.devnet-wallet.json \
+  --session-id example-session-1 \
+  --content-hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --bytes 1073741824 \
+  --service-type CDC \
+  --epoch 1 \
+  --nonce 0
+
+shardmeld smd devnet mine-rewards --ledger ./smd-devnet.db --epoch 1
+```
+
+Query and transfer integer-denominated SMD:
+
+```bash
+shardmeld smd wallet address --wallet ./bob.devnet-wallet.json
+shardmeld smd wallet balance \
+  --wallet ./alice.devnet-wallet.json \
+  --ledger ./smd-devnet.db
+
+shardmeld smd send \
+  --wallet ./alice.devnet-wallet.json \
+  --ledger ./smd-devnet.db \
+  --to smddev1... \
+  --amount 1.25000000 \
+  --epoch 1 \
+  --expiry-epoch 10
+
+shardmeld smd reserve status --ledger ./smd-devnet.db
+shardmeld smd ledger status --ledger ./smd-devnet.db
+```
+
+The deterministic acceptance scenario runs contribution, reward, transfer,
+reserve deposit, database restart, and invariant verification in one command:
+
+```bash
+shardmeld smd devnet scenario --ledger ./fresh-scenario.db --json ./scenario.json
+```
+
+Devnet test-wallet files contain private keys. They are marked explicitly,
+created with owner-only permissions on Unix, and must not be used as production
+wallets. Production macOS Keychain storage, distributed consensus, Sybil
+resistance, real pricing, mainnet, and exchange integration are intentionally
+deferred. See [`docs/SMD_PROTOCOL_DRAFT.md`](docs/SMD_PROTOCOL_DRAFT.md).
+
 ## Safety boundaries
 
 - Only directories explicitly passed to `index` are scanned.
@@ -178,6 +246,8 @@ preflight Piece reconstruction and advertises no partially available Piece.
 - The SQLite index and JSON reports can contain local file paths; keep them private unless paths are sanitized.
 - The chunk server binds to loopback by default; non-loopback exposure requires an explicit flag.
 - Both BT seed commands also bind to loopback by default. Non-loopback use is an explicit trusted-network choice.
+- SMD v0.1 is a local devnet experiment; it has no real-money value or mainnet.
+- Existing BT/CDC paths never create wallets, open an SMD ledger, or issue rewards automatically.
 
 See `docs/PROTOTYPE.md` for scope, metrics, and known limitations.
 Measured synthetic results are in `experiments/RESULTS.md`.

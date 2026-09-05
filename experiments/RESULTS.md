@@ -309,9 +309,35 @@ Two independent `shardmeld` processes communicated over `127.0.0.1:45981`:
 
 The readiness probe accounts for the server report showing two TCP connections. Only the second connection carried the six chunk requests.
 
+## SMD v0.1 devnet economy acceptance
+
+The final release build completed the deterministic local scenario documented
+in `experiments/smd-v01-devnet/`. One receiver-signed 2 GiB CDC reconstruction
+receipt issued 25.00000000 SMD to Alice. Alice transferred 5.00000000 SMD to
+Bob, and Bob permanently reserved 2.00000000 SMD. After reopening SQLite, the
+ledger retained all three accounts, both transactions, the rewarded receipt,
+and internally consistent supply totals.
+
+This is a devnet state-machine and persistence result. It does not prove Sybil
+resistance, distributed consensus, mainnet safety, or monetary value.
+
 ## Automated verification
 
-Thirty-seven automated tests passed, including:
+Sixty automated tests passed. The original thirty-seven CDC and
+BitTorrent tests remain unchanged and passing. The additional SMD tests cover:
+
+- stable, distinct, checksummed devnet wallet addresses and backup round trips;
+- domain-separated Ed25519 signature acceptance and tamper rejection;
+- nonce replay, insufficient balance, arithmetic overflow, and reserve-sender rejection;
+- atomic batch rollback and restart persistence;
+- fixed supply, circulation, permanent reserve, and account-sum invariants;
+- useful-contribution scoring, pair-frequency decay, repeated-content detection,
+  receipt/session replay rejection, and per-epoch address reward caps;
+- emission phase decay and exact maximum-emission clamping;
+- zero issuance without contribution and disabled v0.1 user pricing;
+- a real CLI-process wallet, reward, transfer, reserve, backup, and reopen flow.
+
+The original suite includes:
 
 - exact rebuild after insertion and modification;
 - 100% identical-file reuse;
@@ -375,4 +401,4 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 - Platform: macOS Apple Silicon (`arm64`).
 - Version: `shardmeld 2.0.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `3b1948c64ec67ba346e4d67fe48efadbcf0d48328a8608484d31e8e35c536894`.
+- SHA-256: `41e4405dff6c8be1b0c0bbd17fee8787bbd4ba35ff9a43917a8ecd766ed03683`.

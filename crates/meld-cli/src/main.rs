@@ -13,6 +13,11 @@ use meld_core::{
     verify_target,
 };
 use serde::Serialize;
+use smd_core::{
+    Address as SmdAddress, Amount as SmdAmount, ContributionReceipt, DevnetAuthorityConsensus,
+    Ledger as SmdLedger, NetworkId as SmdNetworkId, ServiceType, Transaction as SmdTransaction,
+    Wallet as SmdWallet, run_devnet_scenario,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -31,6 +36,11 @@ enum Command {
     Capabilities {
         #[arg(long)]
         json: Option<PathBuf>,
+    },
+    /// Experimental SMD v0.1 devnet economy commands. Not mainnet or real-money ready.
+    Smd {
+        #[command(subcommand)]
+        command: SmdCommand,
     },
     /// Index files from one explicitly authorized directory.
     Index {
@@ -224,6 +234,187 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum SmdCommand {
+    /// Create, inspect, receive with, and back up local devnet wallets.
+    Wallet {
+        #[command(subcommand)]
+        command: SmdWalletCommand,
+    },
+    /// Sign and submit one devnet account-model transfer.
+    Send {
+        #[arg(long)]
+        wallet: PathBuf,
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        amount: SmdAmount,
+        #[arg(long)]
+        epoch: u64,
+        #[arg(long)]
+        expiry_epoch: u64,
+    },
+    /// Inspect the independent SMD ledger.
+    Ledger {
+        #[command(subcommand)]
+        command: SmdLedgerCommand,
+    },
+    /// Inspect the protocol-owned permanent reserve.
+    Reserve {
+        #[command(subcommand)]
+        command: SmdReserveCommand,
+    },
+    /// Record or inspect verified useful-contribution receipts.
+    Contribution {
+        #[command(subcommand)]
+        command: SmdContributionCommand,
+    },
+    /// Inspect reward issuance and pending receipts.
+    Rewards {
+        #[command(subcommand)]
+        command: SmdRewardsCommand,
+    },
+    /// Initialize, settle, or exercise the authority-ordered devnet.
+    Devnet {
+        #[command(subcommand)]
+        command: SmdDevnetCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdWalletCommand {
+    /// Create an explicit local devnet test-wallet file.
+    Create {
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Print the wallet's stable devnet address.
+    Address {
+        #[arg(long)]
+        wallet: PathBuf,
+    },
+    /// Query the wallet account in an SMD ledger.
+    Balance {
+        #[arg(long)]
+        wallet: PathBuf,
+        #[arg(long)]
+        ledger: PathBuf,
+    },
+    /// Print the receive address without exposing private key material.
+    Receive {
+        #[arg(long)]
+        wallet: PathBuf,
+    },
+    /// Export a validated devnet test-wallet backup to a new file.
+    ExportBackup {
+        #[arg(long)]
+        wallet: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Import a validated devnet backup into a new local test-wallet file.
+    ImportBackup {
+        #[arg(long)]
+        backup: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdLedgerCommand {
+    Status {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+    Transactions {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdReserveCommand {
+    Status {
+        #[arg(long)]
+        ledger: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdContributionCommand {
+    /// Receiver-sign a verified contribution and add it to the pending pool.
+    Record {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        provider_wallet: PathBuf,
+        #[arg(long)]
+        receiver_wallet: PathBuf,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        content_hash: String,
+        #[arg(long)]
+        bytes: u64,
+        #[arg(long)]
+        service_type: ServiceType,
+        #[arg(long)]
+        epoch: u64,
+        #[arg(long)]
+        nonce: u64,
+    },
+    Status {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdRewardsCommand {
+    Status {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SmdDevnetCommand {
+    Genesis {
+        #[arg(long)]
+        ledger: PathBuf,
+    },
+    MineRewards {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        epoch: u64,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+    /// Run the full Alice-to-Bob-to-reserve persistence acceptance scenario.
+    Scenario {
+        #[arg(long)]
+        ledger: PathBuf,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -239,6 +430,7 @@ fn main() -> Result<()> {
                 report.deferred.len()
             );
         }
+        Command::Smd { command } => run_smd(command)?,
         Command::Index {
             source,
             db,
@@ -609,6 +801,240 @@ fn main() -> Result<()> {
                 bail!("verification failed");
             }
         }
+    }
+    Ok(())
+}
+
+fn run_smd(command: SmdCommand) -> Result<()> {
+    eprintln!("SMD v0.1 DEVNET / EXPERIMENTAL / NOT MAINNET / NOT REAL-MONEY READY");
+    match command {
+        SmdCommand::Wallet { command } => match command {
+            SmdWalletCommand::Create { out } => {
+                let wallet = SmdWallet::generate(SmdNetworkId::Devnet);
+                wallet.export_devnet_test_file(&out)?;
+                println!(
+                    "wallet={} address={} storage=explicit-devnet-test-file",
+                    out.display(),
+                    wallet.address()?
+                );
+            }
+            SmdWalletCommand::Address { wallet } | SmdWalletCommand::Receive { wallet } => {
+                let wallet = SmdWallet::import_devnet_test_file(&wallet)?;
+                println!("{}", wallet.address()?);
+            }
+            SmdWalletCommand::Balance { wallet, ledger } => {
+                let wallet = SmdWallet::import_devnet_test_file(&wallet)?;
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let account = ledger.account(&wallet.address()?)?;
+                println!(
+                    "address={} balance={} SMD atomic={} nonce={}",
+                    account.address,
+                    account.balance,
+                    account.balance.atomic(),
+                    account.nonce
+                );
+            }
+            SmdWalletCommand::ExportBackup { wallet, out } => {
+                let wallet = SmdWallet::import_devnet_test_file(&wallet)?;
+                wallet.export_devnet_test_file(&out)?;
+                println!("backup={} address={}", out.display(), wallet.address()?);
+            }
+            SmdWalletCommand::ImportBackup { backup, out } => {
+                let wallet = SmdWallet::import_devnet_test_file(&backup)?;
+                wallet.export_devnet_test_file(&out)?;
+                println!("wallet={} address={}", out.display(), wallet.address()?);
+            }
+        },
+        SmdCommand::Send {
+            wallet,
+            ledger,
+            to,
+            amount,
+            epoch,
+            expiry_epoch,
+        } => {
+            let wallet = SmdWallet::import_devnet_test_file(&wallet)?;
+            let to = SmdAddress::parse_for_network(&to, SmdNetworkId::Devnet)?;
+            let mut ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+            let nonce = ledger.account(&wallet.address()?)?.nonce;
+            let transaction =
+                SmdTransaction::signed(&wallet, &to, amount, nonce, epoch, expiry_epoch)?;
+            let transaction_id = ledger.submit_transaction(&transaction, epoch)?;
+            println!(
+                "transaction={} from={} to={} amount={} SMD nonce={} accepted_epoch={}",
+                transaction_id, transaction.from, transaction.to, transaction.amount, nonce, epoch
+            );
+        }
+        SmdCommand::Ledger { command } => match command {
+            SmdLedgerCommand::Status { ledger, json } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let status = ledger.status()?;
+                save_report(&status, json.as_deref())?;
+                println!(
+                    "network={} accounts={} transactions={} receipts={} pending={} minted={} SMD circulating={} SMD",
+                    status.network_id,
+                    status.accounts,
+                    status.transactions,
+                    status.contribution_receipts,
+                    status.pending_receipts,
+                    status.supply.minted_supply,
+                    status.supply.circulating_supply
+                );
+            }
+            SmdLedgerCommand::Transactions {
+                ledger,
+                limit,
+                json,
+            } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let transactions = ledger.transactions(limit)?;
+                save_report(&transactions, json.as_deref())?;
+                println!("transactions={}", transactions.len());
+                for record in transactions {
+                    println!(
+                        "{} {} -> {} {} SMD nonce={} epoch={}",
+                        record.transaction_id,
+                        record.transaction.from,
+                        record.transaction.to,
+                        record.transaction.amount,
+                        record.transaction.nonce,
+                        record.accepted_epoch
+                    );
+                }
+            }
+        },
+        SmdCommand::Reserve { command } => match command {
+            SmdReserveCommand::Status { ledger } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let status = ledger.status()?;
+                println!(
+                    "address={} balance={} SMD atomic={} monotonic=true",
+                    SmdAddress::reserve(),
+                    status.supply.reserve_balance,
+                    status.supply.reserve_balance.atomic()
+                );
+            }
+        },
+        SmdCommand::Contribution { command } => match command {
+            SmdContributionCommand::Record {
+                ledger,
+                provider_wallet,
+                receiver_wallet,
+                session_id,
+                content_hash,
+                bytes,
+                service_type,
+                epoch,
+                nonce,
+            } => {
+                let provider = SmdWallet::import_devnet_test_file(&provider_wallet)?;
+                let receiver = SmdWallet::import_devnet_test_file(&receiver_wallet)?;
+                let receipt = ContributionReceipt::confirmed(
+                    &provider,
+                    &receiver,
+                    session_id,
+                    content_hash,
+                    bytes,
+                    service_type,
+                    epoch,
+                    nonce,
+                )?;
+                let mut ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let receipt_id = ledger.submit_contribution(&receipt)?;
+                println!(
+                    "receipt={} provider={} receiver={} bytes={} service={} status=pending",
+                    receipt_id,
+                    receipt.provider_address,
+                    receipt.receiver_address,
+                    receipt.bytes_delivered,
+                    receipt.service_type.protocol_name()
+                );
+            }
+            SmdContributionCommand::Status {
+                ledger,
+                limit,
+                json,
+            } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let receipts = ledger.reward_receipts(limit)?;
+                save_report(&receipts, json.as_deref())?;
+                let bytes = receipts.iter().try_fold(0_u64, |total, record| {
+                    total
+                        .checked_add(record.receipt.bytes_delivered)
+                        .context("lifetime contribution byte count overflow")
+                })?;
+                println!("receipts={} verified_bytes={}", receipts.len(), bytes);
+            }
+        },
+        SmdCommand::Rewards { command } => match command {
+            SmdRewardsCommand::Status { ledger, json } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let status = ledger.status()?;
+                let receipts = ledger.reward_receipts(1_000)?;
+                let protocol_rewards =
+                    receipts.iter().try_fold(SmdAmount::ZERO, |total, item| {
+                        total.checked_add(item.protocol_subsidy)
+                    })?;
+                let report = serde_json::json!({
+                    "network_id": status.network_id,
+                    "pending_receipts": status.pending_receipts,
+                    "protocol_rewards": protocol_rewards,
+                    "user_resource_fees": SmdAmount::ZERO,
+                    "network_emitted_supply": status.supply.network_emitted_supply,
+                });
+                save_report(&report, json.as_deref())?;
+                println!(
+                    "pending={} protocol_rewards={} SMD resource_payments=0.00000000 SMD network_emitted={} SMD",
+                    status.pending_receipts, protocol_rewards, status.supply.network_emitted_supply
+                );
+            }
+        },
+        SmdCommand::Devnet { command } => match command {
+            SmdDevnetCommand::Genesis { ledger } => {
+                let ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let status = ledger.status()?;
+                println!(
+                    "ledger={} network={} reserve={} SMD minted={} SMD emitted={} SMD",
+                    ledger.network(),
+                    status.network_id,
+                    status.supply.reserve_balance,
+                    status.supply.minted_supply,
+                    status.supply.network_emitted_supply
+                );
+            }
+            SmdDevnetCommand::MineRewards {
+                ledger,
+                epoch,
+                json,
+            } => {
+                let mut ledger = SmdLedger::open(&ledger, SmdNetworkId::Devnet)?;
+                let summary = ledger.mine_rewards(epoch, &DevnetAuthorityConsensus)?;
+                save_report(&summary, json.as_deref())?;
+                println!(
+                    "epoch={} receipts={} score_bytes={} subsidy={} SMD user_fees={} SMD phase={}",
+                    summary.epoch,
+                    summary.receipts_processed,
+                    summary.total_score_bytes,
+                    summary.protocol_subsidy,
+                    summary.user_resource_fees,
+                    summary.emission_phase
+                );
+            }
+            SmdDevnetCommand::Scenario { ledger, json } => {
+                let report = run_devnet_scenario(&ledger)?;
+                save_report(&report, json.as_deref())?;
+                println!(
+                    "scenario=passed alice={} alice_balance={} SMD bob={} bob_balance={} SMD reserve={} SMD transactions={} receipts={} restart_verified=true",
+                    report.alice_address,
+                    report.alice_balance,
+                    report.bob_address,
+                    report.bob_balance,
+                    report.ledger_after_restart.supply.reserve_balance,
+                    report.ledger_after_restart.transactions,
+                    report.ledger_after_restart.contribution_receipts
+                );
+            }
+        },
     }
     Ok(())
 }

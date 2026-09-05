@@ -1,0 +1,33 @@
+{
+  "label": "DEVNET / EXPERIMENTAL / NOT REAL-MONEY READY",
+  "network_id": "devnet",
+  "alice_address": "smddev1wv99ahpgctud4ukemn36q82lyp0rte249x2p67",
+  "bob_address": "smddev1k2964ve7r7260rr7j4r42np7jk3w8qps2a8mhm",
+  "contribution_receipt_id": "685f1fba6792fff68d2b8c92b11b12a52c02d6a6d4f91d32504c806946806777",
+  "reward": {
+    "epoch": 1,
+    "receipts_processed": 1,
+    "total_score_bytes": 2684354560,
+    "protocol_subsidy": 2500000000,
+    "user_resource_fees": 0,
+    "emission_phase": 0
+  },
+  "alice_to_bob_transaction_id": "0e77306f41bc742ee37ad6f4db266b13ce10e17a2f5d876347ee78dccc1d1df5",
+  "bob_to_reserve_transaction_id": "641305416aafbe1f2b64b08659d13884fbe446ee76742bebb685368f809d0989",
+  "alice_balance": 2000000000,
+  "bob_balance": 300000000,
+  "ledger_after_restart": {
+    "protocol_version": 1,
+    "network_id": "devnet",
+    "accounts": 3,
+    "transactions": 2,
+    "contribution_receipts": 1,
+    "pending_receipts": 0,
+    "supply": {
+      "minted_supply": 100002500000000,
+      "network_emitted_supply": 2500000000,
+      "reserve_balance": 100000200000000,
+      "circulating_supply": 2300000000
+    }
+  }
+}

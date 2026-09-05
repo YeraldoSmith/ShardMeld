@@ -8,7 +8,8 @@ repository. The canonical repository is
 
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 37 tests.
+- Automated verification: 60 tests. The original 37 BT/CDC tests remain in
+  place; SMD adds 23 unit, invariant, persistence, and real CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
   strict clippy, all tests, and a locked release build for every push and pull
   request. Pinning prevents a new stable Clippy lint from invalidating an
@@ -59,8 +60,17 @@ The Rust source is the canonical implementation; rebuild it for other targets.
 - `crates/meld-core/src/capabilities.rs` — canonical implemented/deferred/limit
   inventory. Update this whenever scope changes.
 - `crates/meld-core/tests/` — protocol and reconstruction integration tests.
+- `crates/smd-core/` — isolated SMD v0.1 devnet wallet, signature, ledger,
+  reserve, contribution, anti-fraud, emission, pricing, and consensus code.
+- `crates/smd-core/tests/devnet.rs` — economic rules, atomic rollback,
+  persistence, cap, and named invariant tests.
+- `crates/meld-cli/tests/smd_cli.rs` — full CLI-process economy flow.
+- `docs/SMD_PROTOCOL_DRAFT.md` — implementation-matched devnet protocol and
+  security boundary. It must retain the non-mainnet/non-real-money warning.
 - `experiments/RESULTS.md` — measured history and evidence boundaries.
 - `experiments/sqlite-3.53.3-to-3.53.4/` — real-file and qBittorrent evidence.
+- `experiments/smd-v01-devnet/` — final release-build economy scenario and
+  persistence evidence, with explicit evidence limits.
 - `scripts/` — reproducible local smoke and profile runners.
 
 The repository intentionally includes retained experiment outputs, so a fresh
@@ -81,10 +91,17 @@ currently implements:
   is supplied;
 - verified full-file upload seeding;
 - on-demand upload of Pieces reconstructed from the authorized local index.
+- isolated SMD v0.1 devnet wallets and account-model transfers;
+- SQLite atomic ledger, permanent reserve, and fixed capped supply;
+- signed useful-contribution receipts, anti-replay checks, deterministic
+  authority ordering, reward issuance, and cumulative-emission decay;
+- guaranteed free-lane and disabled-pricing interfaces.
 
 Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
 multi-file torrents, and GUI work. Upload connections are currently serial and
-upload Tracker registration is manual.
+upload Tracker registration is manual. SMD mainnet, production wallet storage,
+distributed consensus, mature Sybil resistance, real pricing, paid downloads,
+exchange integration, and real-asset value are also explicitly deferred.
 
 ## Invariants that must not regress
 
@@ -106,6 +123,16 @@ upload Tracker registration is manual.
    controlled loopback result is not evidence of public-swarm behavior.
 10. Before committing public experiment reports, replace local absolute paths
     and scan for credentials.
+11. SMD monetary state uses integer atomic units only; ordinary transactions
+    may never mint supply.
+12. `SMD_PERMANENT_RESERVE` has no spendable private key and its balance may
+    never decrease.
+13. SMD signatures remain network-bound and domain-separated; repeated
+    transaction nonces, receipt nonces, and session IDs must be rejected.
+14. Do not describe authority ordering or receiver signatures as distributed
+    consensus or a solution to Sybil attacks.
+15. Existing BT/CDC commands must remain independent of wallets and the SMD
+    ledger; reward recording remains explicit in v0.1.
 
 ## Recommended next work
 
@@ -117,6 +144,11 @@ The lowest-risk continuation of the BT-compatibility strategy is:
 3. add tests with partial index availability and mixed external seeders;
 4. then consider BEP 9 metadata exchange and DHT;
 5. address multi-file v1 and BT v2/hybrid before building a GUI.
+
+For SMD, keep the v0.1 devnet frozen until its threat model is reviewed. The
+next safe work is a macOS Keychain-backed production wallet abstraction and
+stronger receipt audit/diversity research; neither change authorizes mainnet or
+real-value use.
 
 Do not promote one of these items to an implemented capability until an
 automated test and, where interoperability is claimed, an unchanged external

@@ -16,7 +16,15 @@
     "standard-cancel",
     "magnet-v1-local-metadata-binding",
     "verified-file-upload-seeding",
-    "on-demand-index-piece-seeding"
+    "on-demand-index-piece-seeding",
+    "smd-v0.1-devnet-wallets",
+    "smd-v0.1-account-ledger",
+    "smd-v0.1-permanent-reserve",
+    "smd-v0.1-fixed-supply",
+    "smd-v0.1-signed-contribution-receipts",
+    "smd-v0.1-useful-contribution-rewards",
+    "smd-v0.1-decreasing-emission",
+    "smd-v0.1-free-lane"
   ],
   "deferred": [
     "dht",
@@ -24,7 +32,13 @@
     "peer-exchange",
     "bittorrent-v2-hybrid",
     "multi-file-torrents",
-    "gui"
+    "gui",
+    "smd-mainnet",
+    "smd-production-wallet-storage",
+    "smd-distributed-consensus",
+    "smd-sybil-resistant-rewards",
+    "smd-real-money-exchange",
+    "smd-real-resource-pricing"
   ],
   "limits": [
     "explicitly-authorized-index-roots-only",
@@ -33,6 +47,11 @@
     "piece-level-endgame",
     "maximum-four-active-peers",
     "serial-upload-connections",
-    "manual-upload-tracker-registration"
+    "manual-upload-tracker-registration",
+    "smd-devnet-only",
+    "smd-devnet-authority-ordering",
+    "smd-explicit-test-wallet-files-contain-private-keys",
+    "smd-user-resource-fee-disabled",
+    "smd-receiver-signatures-do-not-solve-sybil-attacks"
   ]
 }
