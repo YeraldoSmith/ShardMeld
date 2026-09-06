@@ -1,0 +1,15 @@
+{
+  "engine_version": "2.0.0",
+  "source": "packaged-macos-arm64",
+  "bind": "127.0.0.1:60663",
+  "source_bytes_verified": 9515341,
+  "pieces_verified_before_listen": 37,
+  "connections": 0,
+  "protocol_errors": 0,
+  "shutdown_requested": true,
+  "process_exit_success": true,
+  "tracker_events": [
+    { "event": "started", "success": true, "left": 0 },
+    { "event": "stopped", "success": true, "left": 0 }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "engine_version": "2.0.0",
+  "source": "packaged-macos-arm64",
+  "target_bytes": 9515341,
+  "pieces_verified": 37,
+  "block_requests": 581,
+  "network_payload_bytes": 9515341,
+  "output_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "verified": true,
+  "seed": {
+    "bind": "127.0.0.1:60636",
+    "connections": 1,
+    "peak_concurrent_connections": 1,
+    "protocol_errors": 0,
+    "tracker_events": [
+      { "event": "started", "uploaded": 0, "downloaded": 0, "left": 0 },
+      { "event": "stopped", "uploaded": 9515341, "downloaded": 0, "left": 0 }
+    ]
+  },
+  "downloader": {
+    "tracker_events": [
+      { "event": "started", "uploaded": 0, "downloaded": 0, "left": 9515341 },
+      { "event": "completed", "uploaded": 0, "downloaded": 9515341, "left": 0 },
+      { "event": "stopped", "uploaded": 0, "downloaded": 9515341, "left": 0 }
+    ],
+    "tracker_event_failures": 0
+  }
+}

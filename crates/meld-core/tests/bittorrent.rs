@@ -439,6 +439,56 @@ fn corrupted_standard_peer_data_never_persists_an_output() {
 }
 
 #[test]
+fn failed_tracker_download_never_announces_completed() {
+    let root = tempdir().unwrap();
+    let sources = root.path().join("sources");
+    fs::create_dir_all(&sources).unwrap();
+    let target_bytes = deterministic_bytes(512 * 1024);
+    let target = root.path().join("target.bin");
+    fs::write(&target, &target_bytes).unwrap();
+    let peer_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let peer_address = peer_listener.local_addr().unwrap();
+    let tracker_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tracker_address = tracker_listener.local_addr().unwrap();
+    let announce = format!("http://{tracker_address}/announce");
+    let torrent_path = root.path().join("target.torrent");
+    fs::write(
+        &torrent_path,
+        single_file_torrent_with_announce("target.bin", &target_bytes, 256 * 1024, Some(&announce)),
+    )
+    .unwrap();
+    let profile = ChunkProfile::named("s").unwrap();
+    let descriptor = create_descriptor(&target, profile).unwrap();
+    let mut index = IndexDb::open(&root.path().join("index.db")).unwrap();
+    index.index_directory(&sources, profile).unwrap();
+    let torrent = load_v1_torrent(&torrent_path).unwrap();
+    let peer_torrent = torrent.clone();
+    let peer = thread::spawn(move || {
+        serve_corrupt_standard_peer(peer_listener, peer_torrent, target_bytes)
+    });
+    let tracker = thread::spawn(move || {
+        serve_mock_tracker(tracker_listener, [peer_address, peer_address], 2)
+    });
+
+    let output = root.path().join("must-not-exist.bin");
+    let error =
+        fetch_v1_via_tracker(&torrent, &descriptor, &index, None, 6881, &output).unwrap_err();
+    peer.join().unwrap();
+    let requests = tracker.join().unwrap();
+
+    assert!(error.to_string().contains("exhausted"));
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].contains("event=started"));
+    assert!(requests[1].contains("event=stopped"));
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains("completed"))
+    );
+    assert!(!output.exists());
+}
+
+#[test]
 fn tracker_discovery_falls_back_to_second_peer_and_rebuilds() {
     let root = tempdir().unwrap();
     let sources = root.path().join("sources");
@@ -478,7 +528,7 @@ fn tracker_discovery_falls_back_to_second_peer_and_rebuilds() {
     let peer_target = target_bytes.clone();
     let peer = thread::spawn(move || serve_standard_peer(peer_listener, peer_torrent, peer_target));
     let tracker = thread::spawn(move || {
-        serve_mock_tracker(tracker_listener, [unavailable_address, peer_address], 2)
+        serve_mock_tracker(tracker_listener, [unavailable_address, peer_address], 3)
     });
 
     let output = root.path().join("rebuilt-via-tracker.bin");
@@ -494,7 +544,13 @@ fn tracker_discovery_falls_back_to_second_peer_and_rebuilds() {
     assert!(report.verified);
     assert!(tracker_requests[0].contains("event=started"));
     assert!(tracker_requests[0].contains("info_hash=%"));
-    assert!(tracker_requests[1].contains("event=stopped"));
+    assert!(tracker_requests[1].contains("event=completed"));
+    assert!(tracker_requests[1].contains("left=0"));
+    assert!(tracker_requests[2].contains("event=stopped"));
+    assert_eq!(report.tracker_lifecycle.len(), 3);
+    assert_eq!(report.tracker_lifecycle[0].event, "started");
+    assert_eq!(report.tracker_lifecycle[1].event, "completed");
+    assert_eq!(report.tracker_lifecycle[2].event, "stopped");
 }
 
 #[test]
@@ -546,7 +602,7 @@ fn tracker_prefers_rarest_pieces_across_two_peers() {
         )
     });
     let tracker = thread::spawn(move || {
-        serve_mock_tracker(tracker_listener, [first_address, second_address], 2)
+        serve_mock_tracker(tracker_listener, [first_address, second_address], 3)
     });
 
     let output = root.path().join("multi-peer.bin");
@@ -632,7 +688,7 @@ fn faster_peer_automatically_claims_more_piece_jobs() {
         )
     });
     let tracker = thread::spawn(move || {
-        serve_mock_tracker(tracker_listener, [slow_address, fast_address], 2)
+        serve_mock_tracker(tracker_listener, [slow_address, fast_address], 3)
     });
 
     let output = root.path().join("adaptive.bin");
@@ -701,7 +757,7 @@ fn endgame_sends_cancel_for_losing_duplicate_requests() {
         serve_endgame_fast_peer(fast_listener, fast_torrent, fast_target, slow_ready_rx)
     });
     let tracker = thread::spawn(move || {
-        serve_mock_tracker(tracker_listener, [slow_address, fast_address], 2)
+        serve_mock_tracker(tracker_listener, [slow_address, fast_address], 3)
     });
 
     let output = root.path().join("endgame.bin");
@@ -762,7 +818,7 @@ fn endgame_finishes_around_a_stalled_peer_without_republishing_its_piece() {
     let good_target = target_bytes.clone();
     let good = thread::spawn(move || serve_standard_peer(good_listener, good_torrent, good_target));
     let tracker = thread::spawn(move || {
-        serve_mock_tracker(tracker_listener, [stalled_address, good_address], 2)
+        serve_mock_tracker(tracker_listener, [stalled_address, good_address], 3)
     });
 
     let output = root.path().join("reassigned.bin");
@@ -856,7 +912,16 @@ fn multitracker_falls_back_to_udp_tier_and_rebuilds() {
     assert!(report.tracker_attempts[0].error.is_some());
     assert_eq!(report.tracker_attempts[1].tracker, udp_url);
     assert_eq!(report.selected_peer, peer_address);
-    assert_eq!(events, vec![2, 3]);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].0, 2);
+    assert_eq!(events[0].1, 0);
+    assert!(events[0].2 > 0);
+    assert_eq!(events[0].3, 0);
+    assert_eq!(events[1].0, 1);
+    assert!(events[1].1 > 0);
+    assert_eq!(events[1].2, 0);
+    assert_eq!(events[1].3, 0);
+    assert_eq!(events[2], (3, events[1].1, 0, 0));
     assert!(report.verified);
 }
 
@@ -864,10 +929,10 @@ fn serve_mock_udp_tracker(
     socket: UdpSocket,
     peer: SocketAddr,
     expected_info_hash: &[u8],
-) -> Vec<u32> {
+) -> Vec<(u32, u64, u64, u64)> {
     const CONNECTION_ID: u64 = 0x0102_0304_0506_0708;
     let mut events = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         let mut buffer = [0_u8; 2048];
         let (length, client) = socket.recv_from(&mut buffer).unwrap();
         assert_eq!(length, 16);
@@ -893,7 +958,10 @@ fn serve_mock_udp_tracker(
         assert_eq!(&buffer[16..36], expected_info_hash);
         let transaction = u32::from_be_bytes(buffer[12..16].try_into().unwrap());
         let event = u32::from_be_bytes(buffer[80..84].try_into().unwrap());
-        events.push(event);
+        let downloaded = u64::from_be_bytes(buffer[56..64].try_into().unwrap());
+        let left = u64::from_be_bytes(buffer[64..72].try_into().unwrap());
+        let uploaded = u64::from_be_bytes(buffer[72..80].try_into().unwrap());
+        events.push((event, downloaded, left, uploaded));
         let mut announce_response = Vec::new();
         announce_response.extend_from_slice(&1_u32.to_be_bytes());
         announce_response.extend_from_slice(&transaction.to_be_bytes());

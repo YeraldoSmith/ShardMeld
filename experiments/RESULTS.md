@@ -271,6 +271,34 @@ This verifies protocol encoding and lifecycle wiring against a controlled
 local Tracker. It is not evidence of public-Tracker reachability, NAT traversal,
 or delivery of `stopped` after forced process termination.
 
+## ShardMeld 2.0 hardening: completed, interrupts, and concurrent upload
+
+The downloader now records and sends the full Tracker lifecycle. A successful
+incomplete-to-complete transfer sends `started`, then `completed` only after all
+Piece SHA-1 checks and the final target SHA-256 pass, and finally `stopped`. A
+negative corrupt-peer test observes `started` and `stopped` but no `completed`.
+
+Protocol review found and fixed an existing UDP announce defect: the binary
+`downloaded` and `uploaded` counters had been placed in each other's fields.
+The UDP test now decodes all three 64-bit counters at their BEP 15 offsets and
+checks event values `2`, `1`, and `3` for started, completed, and stopped.
+
+Both file and index seeds now use a bounded four-worker upload pool. Two-peer
+tests keep the first connection open while proving that the second peer can
+complete its handshake and become unchoked; the index test also verifies that
+workers use independent SQLite connections. Ctrl-C-aware seed entry points stop
+accepting peers, drain active workers through a 100 ms poll path, preserve final
+counters, and attempt `stopped` before returning the report.
+
+These controlled tests prove lifecycle ordering, the corrected UDP wire layout,
+bounded two-peer concurrency within the four-peer pool, and cooperative
+interrupt handling. They do not prove public-swarm throughput, periodic Tracker
+renewal, aggregate upload rate limiting, a mature choking policy, or recovery
+from SIGKILL/power loss.
+
+The concurrency, split-frame, and failed-download lifecycle regression group
+also passed ten consecutive targeted runs after the full suite.
+
 ## Fixture
 
 - Local source: deterministic 16 MiB `base-v1.bin`.
@@ -343,7 +371,7 @@ resistance, distributed consensus, mainnet safety, or monetary value.
 
 ## Automated verification
 
-Sixty-three automated tests passed: thirty-nine CDC and BitTorrent tests,
+Sixty-eight automated tests passed: forty-four CDC and BitTorrent tests,
 including the original thirty-seven, plus twenty-four SMD tests. The SMD tests cover:
 
 - stable, distinct, checksummed devnet wallet addresses and backup round trips;
@@ -421,4 +449,4 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 - Platform: macOS Apple Silicon (`arm64`).
 - Version: `shardmeld 2.0.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `7fb9b430bc4915b68af36eccb5cdd54f55136615d3f62929a9b67722f85a8738`.
+- SHA-256: `e122ebdda93cc01c70acc299c539a46f2420ff0ab1ce3a22cd0f9eb9de097b3a`.

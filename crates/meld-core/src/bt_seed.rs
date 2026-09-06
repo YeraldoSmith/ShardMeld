@@ -2,6 +2,9 @@ use std::fs::File;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -21,6 +24,9 @@ const HANDSHAKE_LENGTH: usize = 68;
 const BLOCK_LENGTH: u32 = 16 * 1024;
 const MAX_MESSAGE_LENGTH: u32 = 2 * 1024 * 1024;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const MAX_ACTIVE_UPLOAD_CONNECTIONS: usize = 4;
 
 const MESSAGE_CHOKE: u8 = 0;
 const MESSAGE_UNCHOKE: u8 = 1;
@@ -47,7 +53,13 @@ pub struct BtSeedReport {
     pub payload_bytes_sent: u64,
     pub cancel_messages_received: u64,
     pub protocol_errors: u64,
+    #[serde(default)]
+    pub concurrent_connection_limit: u64,
+    #[serde(default)]
+    pub peak_concurrent_connections: u64,
     pub source_verified: bool,
+    #[serde(default)]
+    pub shutdown_requested: bool,
     #[serde(default)]
     pub tracker_announces: Vec<BtTrackerLifecycleAttempt>,
 }
@@ -74,6 +86,12 @@ pub struct BtIndexSeedReport {
     pub cancel_messages_received: u64,
     pub protocol_errors: u64,
     #[serde(default)]
+    pub concurrent_connection_limit: u64,
+    #[serde(default)]
+    pub peak_concurrent_connections: u64,
+    #[serde(default)]
+    pub shutdown_requested: bool,
+    #[serde(default)]
     pub tracker_announces: Vec<BtTrackerLifecycleAttempt>,
 }
 
@@ -83,6 +101,32 @@ struct BtIndexSeedStart {
     max_connections: Option<u64>,
 }
 
+struct BtIndexPeerContext<'a> {
+    torrent: &'a TorrentV1,
+    descriptor: &'a TargetDescriptor,
+    available: &'a [bool],
+    local_peer_id: &'a [u8; 20],
+    shutdown: Option<&'a AtomicBool>,
+}
+
+#[derive(Debug, Default)]
+struct BtSeedConnectionStats {
+    successful_handshakes: u64,
+    block_requests: u64,
+    payload_bytes_sent: u64,
+    cancel_messages_received: u64,
+}
+
+#[derive(Debug, Default)]
+struct BtIndexSeedConnectionStats {
+    successful_handshakes: u64,
+    block_requests: u64,
+    payload_bytes_sent: u64,
+    on_demand_local_chunks_read: u64,
+    on_demand_local_bytes_read: u64,
+    cancel_messages_received: u64,
+}
+
 pub fn serve_v1_file(
     torrent: &TorrentV1,
     descriptor: &TargetDescriptor,
@@ -90,6 +134,46 @@ pub fn serve_v1_file(
     bind: SocketAddr,
     allow_non_loopback: bool,
     max_connections: Option<u64>,
+) -> Result<BtSeedReport> {
+    serve_v1_file_controlled(
+        torrent,
+        descriptor,
+        source,
+        bind,
+        allow_non_loopback,
+        max_connections,
+        None,
+    )
+}
+
+pub fn serve_v1_file_until_shutdown(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    max_connections: Option<u64>,
+    shutdown: &AtomicBool,
+) -> Result<BtSeedReport> {
+    serve_v1_file_controlled(
+        torrent,
+        descriptor,
+        source,
+        bind,
+        allow_non_loopback,
+        max_connections,
+        Some(shutdown),
+    )
+}
+
+fn serve_v1_file_controlled(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    max_connections: Option<u64>,
+    shutdown: Option<&AtomicBool>,
 ) -> Result<BtSeedReport> {
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT seed bind without --allow-non-loopback");
@@ -107,6 +191,7 @@ pub fn serve_v1_file(
         &source_sha256,
         max_connections,
         &local_peer_id,
+        shutdown,
     );
     let uploaded = result
         .as_ref()
@@ -141,6 +226,28 @@ pub fn serve_v1_file_listener(
         &source_sha256,
         max_connections,
         &local_peer_id,
+        None,
+    )
+}
+
+pub fn serve_v1_file_listener_until_shutdown(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    max_connections: Option<u64>,
+    shutdown: &AtomicBool,
+) -> Result<BtSeedReport> {
+    let source_sha256 = validate_seed_source(torrent, descriptor, source)?;
+    let local_peer_id = generate_peer_id()?;
+    serve_v1_file_listener_verified(
+        listener,
+        torrent,
+        source,
+        &source_sha256,
+        max_connections,
+        &local_peer_id,
+        Some(shutdown),
     )
 }
 
@@ -151,8 +258,12 @@ fn serve_v1_file_listener_verified(
     source_sha256: &str,
     max_connections: Option<u64>,
     local_peer_id: &[u8; 20],
+    shutdown: Option<&AtomicBool>,
 ) -> Result<BtSeedReport> {
     let bind = listener.local_addr()?;
+    if shutdown.is_some() {
+        listener.set_nonblocking(true)?;
+    }
     let mut report = BtSeedReport {
         report_format: REPORT_FORMAT.to_owned(),
         report_version: REPORT_VERSION,
@@ -168,22 +279,81 @@ fn serve_v1_file_listener_verified(
         payload_bytes_sent: 0,
         cancel_messages_received: 0,
         protocol_errors: 0,
+        concurrent_connection_limit: MAX_ACTIVE_UPLOAD_CONNECTIONS as u64,
+        peak_concurrent_connections: 0,
         source_verified: true,
+        shutdown_requested: false,
         tracker_announces: Vec::new(),
     };
 
-    while max_connections.is_none_or(|limit| report.connections < limit) {
-        let (mut stream, _) = listener.accept().context("accept BT seed peer")?;
-        report.connections += 1;
-        stream.set_read_timeout(Some(PEER_TIMEOUT))?;
-        stream.set_write_timeout(Some(PEER_TIMEOUT))?;
-        if let Err(error) = serve_peer(&mut stream, torrent, source, local_peer_id, &mut report) {
-            report.protocol_errors += 1;
-            if max_connections == Some(1) {
-                return Err(error);
+    let mut fatal_error = None;
+    thread::scope(|scope| -> Result<()> {
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let mut active = 0_usize;
+        loop {
+            while let Ok(result) = completed_rx.try_recv() {
+                active -= 1;
+                merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
             }
+            if fatal_error.is_some()
+                || is_shutdown(shutdown)
+                || max_connections.is_some_and(|limit| report.connections >= limit)
+            {
+                break;
+            }
+            if active >= MAX_ACTIVE_UPLOAD_CONNECTIONS {
+                let result = completed_rx.recv().context("wait for BT seed worker")?;
+                active -= 1;
+                merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
+                continue;
+            }
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(ACCEPT_POLL_INTERVAL);
+                    continue;
+                }
+                Err(error) => return Err(error).context("accept BT seed peer"),
+            };
+            report.connections += 1;
+            active += 1;
+            report.peak_concurrent_connections =
+                report.peak_concurrent_connections.max(active as u64);
+            stream.set_read_timeout(Some(if shutdown.is_some() {
+                SHUTDOWN_POLL_INTERVAL
+            } else {
+                PEER_TIMEOUT
+            }))?;
+            stream.set_write_timeout(Some(PEER_TIMEOUT))?;
+            let completed_tx = completed_tx.clone();
+            scope.spawn(move || {
+                let mut stats = BtSeedConnectionStats::default();
+                let error = serve_peer(
+                    &mut stream,
+                    torrent,
+                    source,
+                    local_peer_id,
+                    &mut stats,
+                    shutdown,
+                )
+                .err();
+                let _ = completed_tx.send((stats, error));
+            });
         }
+        drop(completed_tx);
+        while active > 0 {
+            let result = completed_rx
+                .recv()
+                .context("join remaining BT seed worker")?;
+            active -= 1;
+            merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
+        }
+        Ok(())
+    })?;
+    if let Some(error) = fatal_error {
+        return Err(error);
     }
+    report.shutdown_requested = is_shutdown(shutdown);
     Ok(report)
 }
 
@@ -191,10 +361,49 @@ pub fn serve_v1_index(
     torrent: &TorrentV1,
     descriptor: &TargetDescriptor,
     index: &IndexDb,
-    index_db: &Path,
     bind: SocketAddr,
     allow_non_loopback: bool,
     max_connections: Option<u64>,
+) -> Result<BtIndexSeedReport> {
+    serve_v1_index_controlled(
+        torrent,
+        descriptor,
+        index,
+        bind,
+        allow_non_loopback,
+        max_connections,
+        None,
+    )
+}
+
+pub fn serve_v1_index_until_shutdown(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    max_connections: Option<u64>,
+    shutdown: &AtomicBool,
+) -> Result<BtIndexSeedReport> {
+    serve_v1_index_controlled(
+        torrent,
+        descriptor,
+        index,
+        bind,
+        allow_non_loopback,
+        max_connections,
+        Some(shutdown),
+    )
+}
+
+fn serve_v1_index_controlled(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    max_connections: Option<u64>,
+    shutdown: Option<&AtomicBool>,
 ) -> Result<BtIndexSeedReport> {
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT index seed bind without --allow-non-loopback");
@@ -212,13 +421,13 @@ pub fn serve_v1_index(
         listener,
         torrent,
         descriptor,
-        index,
-        index_db,
+        index.path(),
         BtIndexSeedStart {
             plan,
             local_peer_id,
             max_connections,
         },
+        shutdown,
     );
     let uploaded = result
         .as_ref()
@@ -242,7 +451,6 @@ pub fn serve_v1_index_listener(
     torrent: &TorrentV1,
     descriptor: &TargetDescriptor,
     index: &IndexDb,
-    index_db: &Path,
     max_connections: Option<u64>,
 ) -> Result<BtIndexSeedReport> {
     let plan = plan_v1_bridge(torrent, descriptor, index)?;
@@ -254,13 +462,13 @@ pub fn serve_v1_index_listener(
         listener,
         torrent,
         descriptor,
-        index,
-        index_db,
+        index.path(),
         BtIndexSeedStart {
             plan,
             local_peer_id,
             max_connections,
         },
+        None,
     )
 }
 
@@ -268,9 +476,9 @@ fn serve_v1_index_listener_preflighted(
     listener: TcpListener,
     torrent: &TorrentV1,
     descriptor: &TargetDescriptor,
-    index: &IndexDb,
     index_db: &Path,
     start: BtIndexSeedStart,
+    shutdown: Option<&AtomicBool>,
 ) -> Result<BtIndexSeedReport> {
     let available: Vec<bool> = start
         .plan
@@ -279,6 +487,9 @@ fn serve_v1_index_listener_preflighted(
         .map(|piece| piece.fully_local)
         .collect();
     let bind = listener.local_addr()?;
+    if shutdown.is_some() {
+        listener.set_nonblocking(true)?;
+    }
     let mut report = BtIndexSeedReport {
         report_format: REPORT_FORMAT.to_owned(),
         report_version: REPORT_VERSION,
@@ -299,33 +510,142 @@ fn serve_v1_index_listener_preflighted(
         on_demand_local_bytes_read: 0,
         cancel_messages_received: 0,
         protocol_errors: 0,
+        concurrent_connection_limit: MAX_ACTIVE_UPLOAD_CONNECTIONS as u64,
+        peak_concurrent_connections: 0,
+        shutdown_requested: false,
         tracker_announces: Vec::new(),
     };
 
-    while start
-        .max_connections
-        .is_none_or(|limit| report.connections < limit)
-    {
-        let (mut stream, _) = listener.accept().context("accept BT index seed peer")?;
-        report.connections += 1;
-        stream.set_read_timeout(Some(PEER_TIMEOUT))?;
-        stream.set_write_timeout(Some(PEER_TIMEOUT))?;
-        if let Err(error) = serve_index_peer(
-            &mut stream,
-            torrent,
-            descriptor,
-            index,
-            &available,
-            &start.local_peer_id,
-            &mut report,
-        ) {
-            report.protocol_errors += 1;
-            if start.max_connections == Some(1) {
-                return Err(error);
+    let mut fatal_error = None;
+    thread::scope(|scope| -> Result<()> {
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let mut active = 0_usize;
+        loop {
+            while let Ok(result) = completed_rx.try_recv() {
+                active -= 1;
+                merge_index_connection(
+                    &mut report,
+                    result,
+                    start.max_connections,
+                    &mut fatal_error,
+                );
             }
+            if fatal_error.is_some()
+                || is_shutdown(shutdown)
+                || start
+                    .max_connections
+                    .is_some_and(|limit| report.connections >= limit)
+            {
+                break;
+            }
+            if active >= MAX_ACTIVE_UPLOAD_CONNECTIONS {
+                let result = completed_rx
+                    .recv()
+                    .context("wait for BT index seed worker")?;
+                active -= 1;
+                merge_index_connection(
+                    &mut report,
+                    result,
+                    start.max_connections,
+                    &mut fatal_error,
+                );
+                continue;
+            }
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(ACCEPT_POLL_INTERVAL);
+                    continue;
+                }
+                Err(error) => return Err(error).context("accept BT index seed peer"),
+            };
+            report.connections += 1;
+            active += 1;
+            report.peak_concurrent_connections =
+                report.peak_concurrent_connections.max(active as u64);
+            stream.set_read_timeout(Some(if shutdown.is_some() {
+                SHUTDOWN_POLL_INTERVAL
+            } else {
+                PEER_TIMEOUT
+            }))?;
+            stream.set_write_timeout(Some(PEER_TIMEOUT))?;
+            let completed_tx = completed_tx.clone();
+            let local_peer_id = &start.local_peer_id;
+            let available = &available;
+            scope.spawn(move || {
+                let mut stats = BtIndexSeedConnectionStats::default();
+                let error = IndexDb::open(index_db)
+                    .and_then(|index| {
+                        serve_index_peer(
+                            &mut stream,
+                            &index,
+                            &mut stats,
+                            BtIndexPeerContext {
+                                torrent,
+                                descriptor,
+                                available,
+                                local_peer_id,
+                                shutdown,
+                            },
+                        )
+                    })
+                    .err();
+                let _ = completed_tx.send((stats, error));
+            });
+        }
+        drop(completed_tx);
+        while active > 0 {
+            let result = completed_rx
+                .recv()
+                .context("join remaining BT index seed worker")?;
+            active -= 1;
+            merge_index_connection(&mut report, result, start.max_connections, &mut fatal_error);
+        }
+        Ok(())
+    })?;
+    if let Some(error) = fatal_error {
+        return Err(error);
+    }
+    report.shutdown_requested = is_shutdown(shutdown);
+    Ok(report)
+}
+
+fn merge_file_connection(
+    report: &mut BtSeedReport,
+    (stats, error): (BtSeedConnectionStats, Option<anyhow::Error>),
+    max_connections: Option<u64>,
+    fatal_error: &mut Option<anyhow::Error>,
+) {
+    report.successful_handshakes += stats.successful_handshakes;
+    report.block_requests += stats.block_requests;
+    report.payload_bytes_sent += stats.payload_bytes_sent;
+    report.cancel_messages_received += stats.cancel_messages_received;
+    if let Some(error) = error {
+        report.protocol_errors += 1;
+        if max_connections == Some(1) && fatal_error.is_none() {
+            *fatal_error = Some(error);
         }
     }
-    Ok(report)
+}
+
+fn merge_index_connection(
+    report: &mut BtIndexSeedReport,
+    (stats, error): (BtIndexSeedConnectionStats, Option<anyhow::Error>),
+    max_connections: Option<u64>,
+    fatal_error: &mut Option<anyhow::Error>,
+) {
+    report.successful_handshakes += stats.successful_handshakes;
+    report.block_requests += stats.block_requests;
+    report.payload_bytes_sent += stats.payload_bytes_sent;
+    report.on_demand_local_chunks_read += stats.on_demand_local_chunks_read;
+    report.on_demand_local_bytes_read += stats.on_demand_local_bytes_read;
+    report.cancel_messages_received += stats.cancel_messages_received;
+    if let Some(error) = error {
+        report.protocol_errors += 1;
+        if max_connections == Some(1) && fatal_error.is_none() {
+            *fatal_error = Some(error);
+        }
+    }
 }
 
 fn validate_seed_source(
@@ -365,10 +685,11 @@ fn serve_peer(
     torrent: &TorrentV1,
     source: &Path,
     local_peer_id: &[u8; 20],
-    report: &mut BtSeedReport,
+    stats: &mut BtSeedConnectionStats,
+    shutdown: Option<&AtomicBool>,
 ) -> Result<()> {
-    read_and_reply_handshake(stream, &torrent.info_hash_sha1, local_peer_id)?;
-    report.successful_handshakes += 1;
+    read_and_reply_handshake(stream, &torrent.info_hash_sha1, local_peer_id, shutdown)?;
+    stats.successful_handshakes += 1;
     send_message(
         stream,
         MESSAGE_BITFIELD,
@@ -377,7 +698,10 @@ fn serve_peer(
     let mut file = File::open(source)?;
     let mut unchoked = false;
     loop {
-        let message = match read_message(stream) {
+        if is_shutdown(shutdown) {
+            break;
+        }
+        let message = match read_message(stream, shutdown) {
             Ok(message) => message,
             Err(error) if is_connection_end(&error) => break,
             Err(error) => return Err(error),
@@ -414,12 +738,12 @@ fn serve_peer(
                 response.extend_from_slice(&begin.to_be_bytes());
                 response.extend_from_slice(&block);
                 send_message(stream, MESSAGE_PIECE, &response)?;
-                report.block_requests += 1;
-                report.payload_bytes_sent += u64::from(length);
+                stats.block_requests += 1;
+                stats.payload_bytes_sent += u64::from(length);
             }
             MESSAGE_CANCEL => {
                 parse_block_message(&payload, torrent)?;
-                report.cancel_messages_received += 1;
+                stats.cancel_messages_received += 1;
             }
             MESSAGE_CHOKE => expect_empty(&payload, "choke")?,
             _ => {}
@@ -430,20 +754,29 @@ fn serve_peer(
 
 fn serve_index_peer(
     stream: &mut TcpStream,
-    torrent: &TorrentV1,
-    descriptor: &TargetDescriptor,
     index: &IndexDb,
-    available: &[bool],
-    local_peer_id: &[u8; 20],
-    report: &mut BtIndexSeedReport,
+    stats: &mut BtIndexSeedConnectionStats,
+    context: BtIndexPeerContext<'_>,
 ) -> Result<()> {
-    read_and_reply_handshake(stream, &torrent.info_hash_sha1, local_peer_id)?;
-    report.successful_handshakes += 1;
-    send_message(stream, MESSAGE_BITFIELD, &availability_bitfield(available))?;
+    read_and_reply_handshake(
+        stream,
+        &context.torrent.info_hash_sha1,
+        context.local_peer_id,
+        context.shutdown,
+    )?;
+    stats.successful_handshakes += 1;
+    send_message(
+        stream,
+        MESSAGE_BITFIELD,
+        &availability_bitfield(context.available),
+    )?;
     let mut unchoked = false;
     let mut cached_piece: Option<(u32, Vec<u8>)> = None;
     loop {
-        let message = match read_message(stream) {
+        if is_shutdown(context.shutdown) {
+            break;
+        }
+        let message = match read_message(stream, context.shutdown) {
             Ok(message) => message,
             Err(error) if is_connection_end(&error) => break,
             Err(error) => return Err(error),
@@ -467,15 +800,19 @@ fn serve_index_peer(
                 if !unchoked {
                     bail!("BT peer requested index data before unchoke");
                 }
-                let (piece, begin, length) = parse_block_message(&payload, torrent)?;
-                if !available[piece as usize] {
+                let (piece, begin, length) = parse_block_message(&payload, context.torrent)?;
+                if !context.available[piece as usize] {
                     bail!("BT peer requested a Piece not advertised by the local index");
                 }
                 if cached_piece.as_ref().map(|cached| cached.0) != Some(piece) {
-                    let (bytes, chunks_read, bytes_read) =
-                        reconstruct_index_piece(torrent, descriptor, index, piece as usize)?;
-                    report.on_demand_local_chunks_read += chunks_read;
-                    report.on_demand_local_bytes_read += bytes_read;
+                    let (bytes, chunks_read, bytes_read) = reconstruct_index_piece(
+                        context.torrent,
+                        context.descriptor,
+                        index,
+                        piece as usize,
+                    )?;
+                    stats.on_demand_local_chunks_read += chunks_read;
+                    stats.on_demand_local_bytes_read += bytes_read;
                     cached_piece = Some((piece, bytes));
                 }
                 let piece_bytes = &cached_piece.as_ref().context("missing cached Piece")?.1;
@@ -485,12 +822,12 @@ fn serve_index_peer(
                 response.extend_from_slice(&begin.to_be_bytes());
                 response.extend_from_slice(block);
                 send_message(stream, MESSAGE_PIECE, &response)?;
-                report.block_requests += 1;
-                report.payload_bytes_sent += u64::from(length);
+                stats.block_requests += 1;
+                stats.payload_bytes_sent += u64::from(length);
             }
             MESSAGE_CANCEL => {
-                parse_block_message(&payload, torrent)?;
-                report.cancel_messages_received += 1;
+                parse_block_message(&payload, context.torrent)?;
+                stats.cancel_messages_received += 1;
             }
             MESSAGE_CHOKE => expect_empty(&payload, "choke")?,
             _ => {}
@@ -543,9 +880,10 @@ fn read_and_reply_handshake(
     stream: &mut TcpStream,
     expected_info_hash_hex: &str,
     peer_id: &[u8; 20],
+    shutdown: Option<&AtomicBool>,
 ) -> Result<()> {
     let mut handshake = [0_u8; HANDSHAKE_LENGTH];
-    stream.read_exact(&mut handshake)?;
+    read_exact_interruptible(stream, &mut handshake, shutdown)?;
     if handshake[0] != 19 || &handshake[1..20] != PROTOCOL_NAME {
         bail!("BT seed peer sent an invalid handshake header");
     }
@@ -624,9 +962,12 @@ fn send_message(stream: &mut TcpStream, message_id: u8, payload: &[u8]) -> Resul
     Ok(())
 }
 
-fn read_message(stream: &mut TcpStream) -> Result<Option<(u8, Vec<u8>)>> {
+fn read_message(
+    stream: &mut TcpStream,
+    shutdown: Option<&AtomicBool>,
+) -> Result<Option<(u8, Vec<u8>)>> {
     let mut length = [0_u8; 4];
-    stream.read_exact(&mut length)?;
+    read_exact_interruptible(stream, &mut length, shutdown)?;
     let length = u32::from_be_bytes(length);
     if length == 0 {
         return Ok(None);
@@ -635,8 +976,30 @@ fn read_message(stream: &mut TcpStream) -> Result<Option<(u8, Vec<u8>)>> {
         bail!("BT seed peer sent an oversized message");
     }
     let mut message = vec![0_u8; length as usize];
-    stream.read_exact(&mut message)?;
+    read_exact_interruptible(stream, &mut message, shutdown)?;
     Ok(Some((message[0], message[1..].to_vec())))
+}
+
+fn read_exact_interruptible(
+    stream: &mut TcpStream,
+    buffer: &mut [u8],
+    shutdown: Option<&AtomicBool>,
+) -> Result<()> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match stream.read(&mut buffer[filled..]) {
+            Ok(0) => {
+                return Err(std::io::Error::from(ErrorKind::UnexpectedEof).into());
+            }
+            Ok(length) => filled += length,
+            Err(error)
+                if shutdown.is_some()
+                    && matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+                    && !is_shutdown(shutdown) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn expect_empty(payload: &[u8], name: &str) -> Result<()> {
@@ -653,8 +1016,13 @@ fn is_connection_end(error: &anyhow::Error) -> bool {
             ErrorKind::UnexpectedEof
                 | ErrorKind::ConnectionReset
                 | ErrorKind::BrokenPipe
+                | ErrorKind::Interrupted
                 | ErrorKind::TimedOut
                 | ErrorKind::WouldBlock
         )
     })
+}
+
+fn is_shutdown(shutdown: Option<&AtomicBool>) -> bool {
+    shutdown.is_some_and(|shutdown| shutdown.load(Ordering::Relaxed))
 }

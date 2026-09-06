@@ -83,6 +83,10 @@ impl IndexDb {
         })
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn index_directory(&mut self, source: &Path, profile: ChunkProfile) -> Result<IndexReport> {
         profile.validate()?;
         let source = source

@@ -2,6 +2,8 @@ use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -9,8 +11,8 @@ use meld_core::{
     ChunkProfile, IndexDb, bind_v1_magnet, capabilities_report, compare_descriptor,
     create_descriptor, fetch_missing_chunks, fetch_v1_from_peer, fetch_v1_via_tracker,
     load_descriptor, load_v1_torrent, parse_v1_magnet, plan_v1_bridge, rebuild_target,
-    save_descriptor, serve_chunk_directory, serve_v1_file, serve_v1_index, stage_missing_chunks,
-    verify_target,
+    save_descriptor, serve_chunk_directory, serve_v1_file_until_shutdown,
+    serve_v1_index_until_shutdown, stage_missing_chunks, verify_target,
 };
 use serde::Serialize;
 use smd_core::{
@@ -616,8 +618,13 @@ fn main() -> Result<()> {
                 &out,
             )?;
             save_report(&report, json.as_deref())?;
+            let lifecycle_failures = report
+                .tracker_lifecycle
+                .iter()
+                .filter(|attempt| !attempt.success)
+                .count();
             println!(
-                "tracker={} peers_discovered={} peers_attempted={} peers_connected={} contributors={} reassigned_pieces={} selected_peer={} local_bytes={} genuinely_missing={} network_payload={} sha256={} verified={}",
+                "tracker={} peers_discovered={} peers_attempted={} peers_connected={} contributors={} reassigned_pieces={} selected_peer={} local_bytes={} genuinely_missing={} network_payload={} tracker_events={} tracker_event_failures={} sha256={} verified={}",
                 report.tracker,
                 report.peers_discovered,
                 report.peers_attempted.len(),
@@ -628,6 +635,8 @@ fn main() -> Result<()> {
                 report.transfer.local_bytes_available,
                 report.transfer.genuinely_missing_bytes,
                 report.transfer.network_payload_bytes,
+                report.tracker_lifecycle.len(),
+                lifecycle_failures,
                 report.transfer.output_sha256,
                 report.verified
             );
@@ -656,13 +665,20 @@ fn main() -> Result<()> {
                 &out,
             )?;
             save_report(&report, json.as_deref())?;
+            let lifecycle_failures = report
+                .tracker_lifecycle
+                .iter()
+                .filter(|attempt| !attempt.success)
+                .count();
             println!(
-                "magnet_info_hash={} metadata={} peers_connected={} contributors={} network_payload={} sha256={} verified={}",
+                "magnet_info_hash={} metadata={} peers_connected={} contributors={} network_payload={} tracker_events={} tracker_event_failures={} sha256={} verified={}",
                 magnet.info_hash_sha1,
                 torrent.name,
                 report.transfer.peers_connected,
                 report.transfer.contributing_peers.len(),
                 report.transfer.network_payload_bytes,
+                report.tracker_lifecycle.len(),
+                lifecycle_failures,
                 report.transfer.output_sha256,
                 report.verified
             );
@@ -687,13 +703,15 @@ fn main() -> Result<()> {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "unlimited".to_owned())
             );
-            let report = serve_v1_file(
+            let shutdown = install_shutdown_flag()?;
+            let report = serve_v1_file_until_shutdown(
                 &torrent,
                 &descriptor,
                 &file,
                 bind,
                 allow_non_loopback,
                 max_connections,
+                &shutdown,
             )?;
             save_report(&report, json.as_deref())?;
             let tracker_failures = report
@@ -702,9 +720,10 @@ fn main() -> Result<()> {
                 .filter(|attempt| !attempt.success)
                 .count();
             println!(
-                "seed_stopped bind={} connections={} handshakes={} requests={} payload={} cancels={} errors={} tracker_announces={} tracker_failures={} verified={}",
+                "seed_stopped bind={} connections={} peak_concurrent={} handshakes={} requests={} payload={} cancels={} errors={} tracker_announces={} tracker_failures={} interrupted={} verified={}",
                 report.bind,
                 report.connections,
+                report.peak_concurrent_connections,
                 report.successful_handshakes,
                 report.block_requests,
                 report.payload_bytes_sent,
@@ -712,6 +731,7 @@ fn main() -> Result<()> {
                 report.protocol_errors,
                 report.tracker_announces.len(),
                 tracker_failures,
+                report.shutdown_requested,
                 report.source_verified
             );
         }
@@ -736,14 +756,15 @@ fn main() -> Result<()> {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "unlimited".to_owned())
             );
-            let report = serve_v1_index(
+            let shutdown = install_shutdown_flag()?;
+            let report = serve_v1_index_until_shutdown(
                 &torrent,
                 &descriptor,
                 &index,
-                &db,
                 bind,
                 allow_non_loopback,
                 max_connections,
+                &shutdown,
             )?;
             save_report(&report, json.as_deref())?;
             let tracker_failures = report
@@ -752,11 +773,12 @@ fn main() -> Result<()> {
                 .filter(|attempt| !attempt.success)
                 .count();
             println!(
-                "index_seed_stopped bind={} advertised={}/{} connections={} handshakes={} requests={} payload={} local_chunks={} local_bytes={} errors={} tracker_announces={} tracker_failures={}",
+                "index_seed_stopped bind={} advertised={}/{} connections={} peak_concurrent={} handshakes={} requests={} payload={} local_chunks={} local_bytes={} errors={} tracker_announces={} tracker_failures={} interrupted={}",
                 report.bind,
                 report.advertised_pieces,
                 report.total_pieces,
                 report.connections,
+                report.peak_concurrent_connections,
                 report.successful_handshakes,
                 report.block_requests,
                 report.payload_bytes_sent,
@@ -764,7 +786,8 @@ fn main() -> Result<()> {
                 report.on_demand_local_bytes_read,
                 report.protocol_errors,
                 report.tracker_announces.len(),
-                tracker_failures
+                tracker_failures,
+                report.shutdown_requested
             );
         }
         Command::StageMissing {
@@ -1199,6 +1222,14 @@ fn run_smd(command: SmdCommand) -> Result<()> {
         },
     }
     Ok(())
+}
+
+fn install_shutdown_flag() -> Result<Arc<AtomicBool>> {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let handler_flag = Arc::clone(&shutdown);
+    ctrlc::set_handler(move || handler_flag.store(true, Ordering::Relaxed))
+        .context("install Ctrl-C shutdown handler")?;
+    Ok(shutdown)
 }
 
 fn save_report<T: Serialize>(report: &T, json_path: Option<&Path>) -> Result<()> {

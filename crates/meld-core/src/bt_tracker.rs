@@ -64,6 +64,8 @@ pub struct BtTrackerFetchReport {
     pub tracker_interval_seconds: u64,
     pub tracker_warning: Option<String>,
     pub tracker_attempts: Vec<BtDiscoveryAttempt>,
+    #[serde(default)]
+    pub tracker_lifecycle: Vec<BtTrackerLifecycleAttempt>,
     pub peers_discovered: u64,
     pub peers_attempted: Vec<BtTrackerAttempt>,
     pub selected_peer: SocketAddr,
@@ -93,6 +95,7 @@ pub fn fetch_v1_via_tracker(
     let peer_id = generate_peer_id()?;
     let key = tracker_key(&peer_id);
     let mut tracker_attempts = Vec::new();
+    let mut tracker_lifecycle = Vec::new();
     let mut peer_attempts = Vec::new();
     let mut discovered_peers = HashSet::new();
     let mut tried_peers = HashSet::new();
@@ -108,10 +111,15 @@ pub fn fetch_v1_via_tracker(
                 &peer_id,
                 key,
                 announce_port,
-                TrackerCounters::new(0, bridge.missing_bytes),
+                TrackerCounters::new(0, bridge.missing_bytes, 0),
                 TrackerEvent::Started,
             ) {
                 Ok(response) if response.peers.len() <= MAX_TRACKER_PEERS => {
+                    tracker_lifecycle.push(successful_lifecycle_attempt(
+                        &display,
+                        TrackerEvent::Started,
+                        &response,
+                    ));
                     tracker_attempts.push(BtDiscoveryAttempt {
                         tier: tier_index as u64,
                         tracker: display.clone(),
@@ -131,6 +139,11 @@ pub fn fetch_v1_via_tracker(
                     }
                 }
                 Ok(response) => {
+                    tracker_lifecycle.push(successful_lifecycle_attempt(
+                        &display,
+                        TrackerEvent::Started,
+                        &response,
+                    ));
                     active_trackers.push(tracker.clone());
                     tracker_attempts.push(BtDiscoveryAttempt {
                         tier: tier_index as u64,
@@ -142,13 +155,21 @@ pub fn fetch_v1_via_tracker(
                         )),
                     });
                 }
-                Err(error) => tracker_attempts.push(BtDiscoveryAttempt {
-                    tier: tier_index as u64,
-                    tracker: display,
-                    peers_returned: 0,
-                    interval_seconds: None,
-                    error: Some(format!("{error:#}")),
-                }),
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    tracker_lifecycle.push(failed_lifecycle_attempt(
+                        &display,
+                        TrackerEvent::Started,
+                        &error,
+                    ));
+                    tracker_attempts.push(BtDiscoveryAttempt {
+                        tier: tier_index as u64,
+                        tracker: display,
+                        peers_returned: 0,
+                        interval_seconds: None,
+                        error: Some(error),
+                    });
+                }
             }
         }
 
@@ -193,7 +214,26 @@ pub fn fetch_v1_via_tracker(
                     .find(|candidate| candidate.peer == transfer.peer)
                     .or_else(|| candidates.first())
                     .context("successful BT transfer had no tracker candidate")?;
-                stop_trackers(&active_trackers, torrent, &peer_id, key, announce_port);
+                if bridge.missing_bytes > 0 {
+                    tracker_lifecycle.extend(announce_tracker_event(
+                        &active_trackers,
+                        torrent,
+                        &peer_id,
+                        key,
+                        announce_port,
+                        TrackerCounters::new(transfer.network_payload_bytes, 0, 0),
+                        TrackerEvent::Completed,
+                    ));
+                }
+                tracker_lifecycle.extend(announce_tracker_event(
+                    &active_trackers,
+                    torrent,
+                    &peer_id,
+                    key,
+                    announce_port,
+                    TrackerCounters::new(transfer.network_payload_bytes, 0, 0),
+                    TrackerEvent::Stopped,
+                ));
                 return Ok(BtTrackerFetchReport {
                     report_format: REPORT_FORMAT.to_owned(),
                     report_version: REPORT_VERSION,
@@ -202,6 +242,7 @@ pub fn fetch_v1_via_tracker(
                     tracker_interval_seconds: selected.interval,
                     tracker_warning: selected.warning.clone(),
                     tracker_attempts,
+                    tracker_lifecycle,
                     peers_discovered: discovered_peers.len() as u64,
                     peers_attempted: peer_attempts,
                     selected_peer: transfer.peer,
@@ -232,7 +273,15 @@ pub fn fetch_v1_via_tracker(
                 }));
             }
         }
-        stop_trackers(&active_trackers, torrent, &peer_id, key, announce_port);
+        tracker_lifecycle.extend(announce_tracker_event(
+            &active_trackers,
+            torrent,
+            &peer_id,
+            key,
+            announce_port,
+            TrackerCounters::new(0, bridge.missing_bytes, 0),
+            TrackerEvent::Stopped,
+        ));
     }
 
     let tracker_failures = tracker_attempts
@@ -304,7 +353,7 @@ pub(crate) fn start_seed_trackers(
                 peer_id,
                 key,
                 port,
-                TrackerCounters::new(0, 0),
+                TrackerCounters::new(0, 0, 0),
                 TrackerEvent::Started,
             ) {
                 Ok(response) => {
@@ -351,7 +400,7 @@ pub(crate) fn stop_seed_trackers(
                 peer_id,
                 key,
                 port,
-                TrackerCounters::new(uploaded, 0),
+                TrackerCounters::new(0, 0, uploaded),
                 TrackerEvent::Stopped,
             ) {
                 Ok(response) => BtTrackerLifecycleAttempt {
@@ -390,41 +439,48 @@ fn shuffled_tier(mut tier: Vec<String>, peer_id: &[u8; 20], tier_index: usize) -
     tier
 }
 
-fn stop_trackers(
+fn announce_tracker_event(
     trackers: &[String],
     torrent: &TorrentV1,
     peer_id: &[u8; 20],
     key: u32,
     port: u16,
-) {
-    for tracker in trackers {
-        let _ = announce(
-            tracker,
-            torrent,
-            peer_id,
-            key,
-            port,
-            TrackerCounters::new(0, 0),
-            TrackerEvent::Stopped,
-        );
-    }
+    counters: TrackerCounters,
+    event: TrackerEvent,
+) -> Vec<BtTrackerLifecycleAttempt> {
+    trackers
+        .iter()
+        .map(|tracker| {
+            let display = redact_tracker_url(tracker);
+            match announce(tracker, torrent, peer_id, key, port, counters, event) {
+                Ok(response) => successful_lifecycle_attempt(&display, event, &response),
+                Err(error) => failed_lifecycle_attempt(&display, event, &format!("{error:#}")),
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
 enum TrackerEvent {
     Started,
+    Completed,
     Stopped,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TrackerCounters {
-    uploaded: u64,
+    downloaded: u64,
     left: u64,
+    uploaded: u64,
 }
 
 impl TrackerCounters {
-    const fn new(uploaded: u64, left: u64) -> Self {
-        Self { uploaded, left }
+    const fn new(downloaded: u64, left: u64, uploaded: u64) -> Self {
+        Self {
+            downloaded,
+            left,
+            uploaded,
+        }
     }
 }
 
@@ -432,6 +488,7 @@ impl TrackerEvent {
     fn http_name(self) -> &'static str {
         match self {
             Self::Started => "started",
+            Self::Completed => "completed",
             Self::Stopped => "stopped",
         }
     }
@@ -439,8 +496,39 @@ impl TrackerEvent {
     fn udp_value(self) -> u32 {
         match self {
             Self::Started => 2,
+            Self::Completed => 1,
             Self::Stopped => 3,
         }
+    }
+}
+
+fn successful_lifecycle_attempt(
+    tracker: &str,
+    event: TrackerEvent,
+    response: &TrackerResponse,
+) -> BtTrackerLifecycleAttempt {
+    BtTrackerLifecycleAttempt {
+        event: event.http_name().to_owned(),
+        tracker: tracker.to_owned(),
+        success: true,
+        interval_seconds: Some(response.interval),
+        warning_message: response.warning_message.clone(),
+        error: None,
+    }
+}
+
+fn failed_lifecycle_attempt(
+    tracker: &str,
+    event: TrackerEvent,
+    error: &str,
+) -> BtTrackerLifecycleAttempt {
+    BtTrackerLifecycleAttempt {
+        event: event.http_name().to_owned(),
+        tracker: tracker.to_owned(),
+        success: false,
+        interval_seconds: None,
+        warning_message: None,
+        error: Some(error.to_owned()),
     }
 }
 
@@ -481,10 +569,11 @@ fn announce_http(
     let info_hash = decode_info_hash(torrent)?;
     let separator = if tracker.contains('?') { '&' } else { '?' };
     let url = format!(
-        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded={}&downloaded=0&left={}&compact=1&numwant=50&key={key}&event={}",
+        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded={}&downloaded={}&left={}&compact=1&numwant=50&key={key}&event={}",
         percent_encode_bytes(&info_hash),
         percent_encode_bytes(peer_id),
         counters.uploaded,
+        counters.downloaded,
         counters.left,
         event.http_name(),
     );
@@ -586,9 +675,9 @@ fn announce_udp_address(
     request.extend_from_slice(&announce_transaction.to_be_bytes());
     request.extend_from_slice(&info_hash);
     request.extend_from_slice(peer_id);
-    request.extend_from_slice(&counters.uploaded.to_be_bytes());
+    request.extend_from_slice(&counters.downloaded.to_be_bytes());
     request.extend_from_slice(&counters.left.to_be_bytes());
-    request.extend_from_slice(&0_u64.to_be_bytes());
+    request.extend_from_slice(&counters.uploaded.to_be_bytes());
     request.extend_from_slice(&event.udp_value().to_be_bytes());
     request.extend_from_slice(&0_u32.to_be_bytes());
     request.extend_from_slice(&key.to_be_bytes());

@@ -8,7 +8,7 @@ repository. The canonical repository is
 
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 63 tests. The BT/CDC suite has 39 tests, including
+- Automated verification: 68 tests. The BT/CDC suite has 44 tests, including
   the original 37; SMD adds 24 unit, invariant, persistence, and real
   CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
@@ -94,6 +94,10 @@ currently implements:
 - on-demand upload of Pieces reconstructed from the authorized local index.
 - best-effort seed-side HTTP(S)/UDP Tracker `started` and clean-exit `stopped`
   announces with redacted reports;
+- downloader-side Tracker `completed` followed by `stopped` after a verified
+  incomplete-to-complete transition;
+- Ctrl-C-aware seed shutdown and bounded concurrent upload service for up to
+  four peers, for both complete-file and index-reconstructed seeds;
 - isolated SMD v0.1 devnet wallets and account-model transfers;
 - SQLite atomic ledger, permanent reserve, and fixed capped supply;
 - signed useful-contribution receipts, anti-replay checks, deterministic
@@ -103,8 +107,9 @@ currently implements:
 - deterministic invariant-checked ledger audit roots.
 
 Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
-multi-file torrents, and GUI work. Upload connections are currently serial and
-Tracker `stopped` delivery requires a clean seed exit. SMD mainnet, mainnet
+multi-file torrents, and GUI work. Upload rate limiting and a full choking
+policy remain deferred; Tracker `stopped` cannot be guaranteed after an
+ungraceful kill or power loss. SMD mainnet, mainnet
 wallet recovery, distributed consensus, mature Sybil resistance, real pricing,
 paid downloads, exchange integration, and real-asset value are also explicitly
 deferred.
@@ -144,11 +149,10 @@ deferred.
 
 The lowest-risk continuation of the BT-compatibility strategy is:
 
-1. emit `completed` when a downloader actually transitions to a complete seed,
-   and add graceful interrupt handling for seed-side `stopped` announces;
-2. support concurrent upload connections with bounded queues, rate limits, and
-   an explicit fairness/choking policy;
-3. add tests with partial index availability and mixed external seeders;
+1. add aggregate upload rate limits and an explicit fairness/choking policy to
+   the bounded four-peer upload pool;
+2. add tests with partial index availability and mixed external seeders;
+3. add periodic seed-side Tracker re-announces for long-running sessions;
 4. then consider BEP 9 metadata exchange and DHT;
 5. address multi-file v1 and BT v2/hybrid before building a GUI.
 

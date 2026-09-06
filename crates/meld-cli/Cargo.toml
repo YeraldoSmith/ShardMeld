@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ctrlc.workspace = true
 meld-core = { path = "../meld-core" }
 serde.workspace = true
 serde_json.workspace = true
