@@ -171,7 +171,8 @@ Both seed modes accept up to four peers concurrently. Each index-upload worker
 opens an independent SQLite connection, so one slow peer does not serialize
 other peers behind a shared database handle. Ctrl-C stops accepting peers,
 lets active workers leave through a bounded polling path, writes the final JSON
-report, and then attempts the Tracker `stopped` announce.
+report after attempting the Tracker `stopped` announce, including that attempt's
+result.
 When the torrent contains HTTP(S) or UDP Tracker metadata, both commands make
 best-effort `started` and clean-exit `stopped` announces using the actual bound
 port. Tracker failures are recorded in the JSON report but do not disable
