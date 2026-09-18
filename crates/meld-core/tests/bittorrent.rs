@@ -1187,6 +1187,10 @@ fn serve_selected_peer(
         if message == 3 {
             break;
         }
+        if message == 8 {
+            assert_eq!(payload.len(), 12);
+            continue;
+        }
         assert_eq!(message, 6);
         assert_eq!(payload.len(), 12);
         let piece = u32::from_be_bytes(payload[0..4].try_into().unwrap());
