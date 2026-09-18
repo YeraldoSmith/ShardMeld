@@ -15,7 +15,7 @@ baseline, code map, invariants, next priorities, and release checklist.
 
 Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. Peer metadata exchange and DHT remain deferred, as do background scanning and GUI work.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种、本地索引按需重建做种、完整 Tracker 生命周期、Ctrl-C 优雅停种和最多四 Peer 并发上传均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 68 项自动化测试通过，其中 44 项覆盖 BT/CDC（包含原有 37 项），24 项覆盖 SMD。2.0 最终包已从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种、本地索引按需重建做种、周期 Tracker 续报、Ctrl-C 优雅停种、最多四 Peer 并发上传、全局上传限速和 FIFO 块公平调度均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 72 项自动化测试通过，其中 48 项覆盖 BT/CDC（包含原有 37 项），24 项覆盖 SMD。2026-08-31 的 2.0 签名包曾从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标；当前硬化包另以最终签名二进制完成了同尺寸的 ShardMeld-to-ShardMeld 标准 BT 传输。
 
 ## Run the delivered macOS binary
 
@@ -151,7 +151,8 @@ Seed a complete verified file to standard v1 clients:
 shardmeld bt-seed-file \
   --torrent ./target.torrent \
   --descriptor ./target.meld \
-  --file ./target.bin
+  --file ./target.bin \
+  --max-upload-bytes-per-second 8388608
 ```
 
 Or advertise only the Pieces that can be reconstructed and SHA-1-verified from
@@ -161,7 +162,8 @@ the authorized CDC index, rebuilding requested Pieces in memory on demand:
 shardmeld bt-seed-index \
   --torrent ./target.torrent \
   --descriptor ./target.meld \
-  --db ./index.db
+  --db ./index.db \
+  --max-upload-bytes-per-second 8388608
 ```
 
 Both seed commands bind to loopback by default. `bt-seed-file` verifies the
@@ -169,13 +171,18 @@ entire file and every Piece before listening. `bt-seed-index` performs a
 preflight Piece reconstruction and advertises no partially available Piece.
 Both seed modes accept up to four peers concurrently. Each index-upload worker
 opens an independent SQLite connection, so one slow peer does not serialize
-other peers behind a shared database handle. Ctrl-C stops accepting peers,
+other peers behind a shared database handle. The optional aggregate upload
+limit is shared by every active peer; block reservations use one FIFO scheduler,
+and the JSON report records the configured limit and total throttle wait. This
+is deterministic block fairness, not BitTorrent tit-for-tat. Ctrl-C stops accepting peers,
 lets active workers leave through a bounded polling path, writes the final JSON
 report after attempting the Tracker `stopped` announce, including that attempt's
 result.
 When the torrent contains HTTP(S) or UDP Tracker metadata, both commands make
-best-effort `started` and clean-exit `stopped` announces using the actual bound
-port. Tracker failures are recorded in the JSON report but do not disable
+best-effort `started`, interval-driven regular re-announces, and clean-exit
+`stopped` announces using the actual bound port. A regular HTTP(S) re-announce
+correctly omits the `event` parameter; UDP uses event value zero. Tracker
+failures are recorded in the JSON report but do not disable
 direct peer connections. Private Tracker query strings are redacted. A
 pre-existing complete seed correctly does not emit BitTorrent's `completed`
 event. Tracker downloads now emit `completed` only after an
@@ -278,8 +285,9 @@ are intentionally deferred. See
 - Both BT seed commands also bind to loopback by default. Non-loopback use is an explicit trusted-network choice.
 - Seed Tracker registration is best-effort. Ctrl-C is handled cleanly, but a
   forced kill or power loss cannot guarantee delivery of `stopped`.
-- Upload concurrency is bounded at four peers. Aggregate rate limiting and a
-  full BitTorrent choking/fairness policy are not implemented yet.
+- Upload concurrency is bounded at four peers. The optional aggregate byte-rate
+  limit uses FIFO block fairness and remains interruptible during shutdown; a
+  mature tit-for-tat choking/optimistic-unchoke policy is not implemented.
 - SMD v0.1 is a local devnet experiment; it has no real-money value or mainnet.
 - Existing BT/CDC paths never create wallets, open an SMD ledger, or issue rewards automatically.
 
@@ -300,6 +308,8 @@ The 2.0 indexed on-demand seed result is in `experiments/sqlite-3.53.3-to-3.53.4
 The packaged seed Tracker lifecycle result is in `experiments/seed-tracker-lifecycle-v20/README.md`.
 The completed-event, Ctrl-C, concurrent-upload, and packaged transfer result is
 in `experiments/tracker-completed-concurrency-v20/README.md`.
+The periodic Tracker renewal and aggregate upload-limit result is in
+`experiments/seed-heartbeat-rate-limit-v20/README.md`.
 
 ## Copyright and license
 

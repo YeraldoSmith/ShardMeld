@@ -299,6 +299,26 @@ from SIGKILL/power loss.
 The concurrency, split-frame, and failed-download lifecycle regression group
 also passed ten consecutive targeted runs after the full suite.
 
+## ShardMeld 2.0 hardening: periodic seed renewal and aggregate upload limit
+
+The final packaged seed registered with a loopback HTTP Tracker that returned a
+one-second interval. The Tracker observed `started`, a regular renewal with no
+`event` parameter, and `stopped` after cooperative Ctrl-C. The seed report
+recorded the same three successful attempts as `started`, `update`, and
+`stopped`.
+
+In a separate packaged run, an 8,388,608 B/s aggregate upload limit covered all
+581 standard block requests. The seed sent 9,515,341 bytes with zero protocol
+errors and reported 1,516,014 microseconds of accumulated FIFO throttle wait.
+The receiver verified all 37 Piece SHA-1 values and the final target SHA-256;
+its complete process took 1.95 seconds including verification and report I/O.
+
+Automated two-peer coverage proves that one 16 KiB/s limiter is shared across
+connections rather than multiplied per connection. Additional tests cover the
+index-seed path, reject a zero-byte limit, and interrupt a nominal multi-hour
+throttle wait in under one second during cooperative shutdown. This is FIFO
+block fairness, not a production tit-for-tat/optimistic-unchoke policy.
+
 ## Fixture
 
 - Local source: deterministic 16 MiB `base-v1.bin`.
@@ -371,7 +391,7 @@ resistance, distributed consensus, mainnet safety, or monetary value.
 
 ## Automated verification
 
-Sixty-eight automated tests passed: forty-four CDC and BitTorrent tests,
+Seventy-two automated tests passed: forty-eight CDC and BitTorrent tests,
 including the original thirty-seven, plus twenty-four SMD tests. The SMD tests cover:
 
 - stable, distinct, checksummed devnet wallet addresses and backup round trips;
@@ -420,6 +440,11 @@ The original suite includes:
 - refusal to seed a corrupted complete source.
 - exact standard block upload from a verified complete file.
 - exact on-demand Piece reconstruction from separate indexed material files.
+- interval-driven seed Tracker renewal with a regular HTTP announce that omits
+  the `event` parameter.
+- one aggregate FIFO block limiter shared by two upload peers.
+- upload-limit validation, index-seed shaping, and prompt shutdown while a
+  throttle reservation is queued.
 
 The first CDC implementation failed the shifted-file test at roughly 15.8% reuse because it retained old byte history with a rotate operation. The implementation was corrected to discard old high bits, after which the full suite and smoke flow passed. This is included as development evidence, not hidden as a successful first attempt.
 
@@ -436,7 +461,8 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
   tracker discovery and multitracker tier fallback.
 - DHT discovery and magnet metadata exchange are still not implemented.
   Endgame is Piece-level rather than block-level. Upload is loopback-first and
-  lacks production choking, automatic announce, and NAT traversal.
+  lacks production tit-for-tat choking, public-swarm validation, and NAT
+  traversal.
 - `missing_payload` excludes future protocol overhead and retries.
 - Neither the synthetic 97.1407% result nor the SQLite result may be
   generalized to arbitrary files.
@@ -449,4 +475,4 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 - Platform: macOS Apple Silicon (`arm64`).
 - Version: `shardmeld 2.0.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `e122ebdda93cc01c70acc299c539a46f2420ff0ab1ce3a22cd0f9eb9de097b3a`.
+- SHA-256: `d1d0ea4f19c989b3c65f29e734983d7fa2edbf3c7549b54c39d5cb3bb1dd74cd`.

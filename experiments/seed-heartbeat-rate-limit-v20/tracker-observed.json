@@ -1,0 +1,23 @@
+[
+  {
+    "event": "started",
+    "port": 46133,
+    "uploaded": 0,
+    "downloaded": 0,
+    "left": 0
+  },
+  {
+    "event": null,
+    "port": 46133,
+    "uploaded": 0,
+    "downloaded": 0,
+    "left": 0
+  },
+  {
+    "event": "stopped",
+    "port": 46133,
+    "uploaded": 0,
+    "downloaded": 0,
+    "left": 0
+  }
+]

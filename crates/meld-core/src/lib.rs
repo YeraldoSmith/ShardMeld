@@ -18,9 +18,12 @@ pub use bittorrent::{
 };
 pub use bt_peer::{BtPeerFetchReport, fetch_v1_from_peer};
 pub use bt_seed::{
-    BtIndexSeedReport, BtSeedReport, serve_v1_file, serve_v1_file_listener,
-    serve_v1_file_listener_until_shutdown, serve_v1_file_until_shutdown, serve_v1_index,
-    serve_v1_index_listener, serve_v1_index_until_shutdown,
+    BtIndexSeedReport, BtSeedOptions, BtSeedReport, serve_v1_file, serve_v1_file_listener,
+    serve_v1_file_listener_until_shutdown, serve_v1_file_listener_until_shutdown_with_options,
+    serve_v1_file_listener_with_options, serve_v1_file_until_shutdown,
+    serve_v1_file_until_shutdown_with_options, serve_v1_file_with_options, serve_v1_index,
+    serve_v1_index_listener, serve_v1_index_listener_with_options, serve_v1_index_until_shutdown,
+    serve_v1_index_until_shutdown_with_options, serve_v1_index_with_options,
 };
 pub use bt_tracker::{
     BtDiscoveryAttempt, BtTrackerAttempt, BtTrackerFetchReport, BtTrackerLifecycleAttempt,

@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use meld_core::{
-    ChunkProfile, IndexDb, bind_v1_magnet, capabilities_report, compare_descriptor,
+    BtSeedOptions, ChunkProfile, IndexDb, bind_v1_magnet, capabilities_report, compare_descriptor,
     create_descriptor, fetch_missing_chunks, fetch_v1_from_peer, fetch_v1_via_tracker,
     load_descriptor, load_v1_torrent, parse_v1_magnet, plan_v1_bridge, rebuild_target,
-    save_descriptor, serve_chunk_directory, serve_v1_file_until_shutdown,
-    serve_v1_index_until_shutdown, stage_missing_chunks, verify_target,
+    save_descriptor, serve_chunk_directory, serve_v1_file_until_shutdown_with_options,
+    serve_v1_index_until_shutdown_with_options, stage_missing_chunks, verify_target,
 };
 use serde::Serialize;
 use smd_core::{
@@ -153,6 +153,9 @@ enum Command {
         allow_non_loopback: bool,
         #[arg(long)]
         max_connections: Option<u64>,
+        /// Aggregate payload limit shared fairly by all upload peers.
+        #[arg(long)]
+        max_upload_bytes_per_second: Option<u64>,
         #[arg(long)]
         json: Option<PathBuf>,
     },
@@ -170,6 +173,9 @@ enum Command {
         allow_non_loopback: bool,
         #[arg(long)]
         max_connections: Option<u64>,
+        /// Aggregate payload limit shared fairly by all upload peers.
+        #[arg(long)]
+        max_upload_bytes_per_second: Option<u64>,
         #[arg(long)]
         json: Option<PathBuf>,
     },
@@ -690,27 +696,34 @@ fn main() -> Result<()> {
             bind,
             allow_non_loopback,
             max_connections,
+            max_upload_bytes_per_second,
             json,
         } => {
             let torrent = load_v1_torrent(&torrent)?;
             let descriptor = load_descriptor(&descriptor)?;
             println!(
-                "starting_bt_seed bind={} file={} info_hash={} max_connections={}",
+                "starting_bt_seed bind={} file={} info_hash={} max_connections={} max_upload_bytes_per_second={}",
                 bind,
                 file.display(),
                 torrent.info_hash_sha1,
                 max_connections
                     .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unlimited".to_owned()),
+                max_upload_bytes_per_second
+                    .map(|value| value.to_string())
                     .unwrap_or_else(|| "unlimited".to_owned())
             );
             let shutdown = install_shutdown_flag()?;
-            let report = serve_v1_file_until_shutdown(
+            let report = serve_v1_file_until_shutdown_with_options(
                 &torrent,
                 &descriptor,
                 &file,
                 bind,
                 allow_non_loopback,
-                max_connections,
+                BtSeedOptions {
+                    max_connections,
+                    max_upload_bytes_per_second,
+                },
                 &shutdown,
             )?;
             save_report(&report, json.as_deref())?;
@@ -720,13 +733,14 @@ fn main() -> Result<()> {
                 .filter(|attempt| !attempt.success)
                 .count();
             println!(
-                "seed_stopped bind={} connections={} peak_concurrent={} handshakes={} requests={} payload={} cancels={} errors={} tracker_announces={} tracker_failures={} interrupted={} verified={}",
+                "seed_stopped bind={} connections={} peak_concurrent={} handshakes={} requests={} payload={} throttle_wait_micros={} cancels={} errors={} tracker_announces={} tracker_failures={} interrupted={} verified={}",
                 report.bind,
                 report.connections,
                 report.peak_concurrent_connections,
                 report.successful_handshakes,
                 report.block_requests,
                 report.payload_bytes_sent,
+                report.upload_throttle_wait_micros,
                 report.cancel_messages_received,
                 report.protocol_errors,
                 report.tracker_announces.len(),
@@ -742,28 +756,35 @@ fn main() -> Result<()> {
             bind,
             allow_non_loopback,
             max_connections,
+            max_upload_bytes_per_second,
             json,
         } => {
             let torrent = load_v1_torrent(&torrent)?;
             let descriptor = load_descriptor(&descriptor)?;
             let index = IndexDb::open(&db)?;
             println!(
-                "starting_bt_index_seed bind={} db={} info_hash={} max_connections={}",
+                "starting_bt_index_seed bind={} db={} info_hash={} max_connections={} max_upload_bytes_per_second={}",
                 bind,
                 db.display(),
                 torrent.info_hash_sha1,
                 max_connections
                     .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unlimited".to_owned()),
+                max_upload_bytes_per_second
+                    .map(|value| value.to_string())
                     .unwrap_or_else(|| "unlimited".to_owned())
             );
             let shutdown = install_shutdown_flag()?;
-            let report = serve_v1_index_until_shutdown(
+            let report = serve_v1_index_until_shutdown_with_options(
                 &torrent,
                 &descriptor,
                 &index,
                 bind,
                 allow_non_loopback,
-                max_connections,
+                BtSeedOptions {
+                    max_connections,
+                    max_upload_bytes_per_second,
+                },
                 &shutdown,
             )?;
             save_report(&report, json.as_deref())?;
@@ -773,7 +794,7 @@ fn main() -> Result<()> {
                 .filter(|attempt| !attempt.success)
                 .count();
             println!(
-                "index_seed_stopped bind={} advertised={}/{} connections={} peak_concurrent={} handshakes={} requests={} payload={} local_chunks={} local_bytes={} errors={} tracker_announces={} tracker_failures={} interrupted={}",
+                "index_seed_stopped bind={} advertised={}/{} connections={} peak_concurrent={} handshakes={} requests={} payload={} throttle_wait_micros={} local_chunks={} local_bytes={} errors={} tracker_announces={} tracker_failures={} interrupted={}",
                 report.bind,
                 report.advertised_pieces,
                 report.total_pieces,
@@ -782,6 +803,7 @@ fn main() -> Result<()> {
                 report.successful_handshakes,
                 report.block_requests,
                 report.payload_bytes_sent,
+                report.upload_throttle_wait_micros,
                 report.on_demand_local_chunks_read,
                 report.on_demand_local_bytes_read,
                 report.protocol_errors,

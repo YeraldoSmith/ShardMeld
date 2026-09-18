@@ -1,13 +1,17 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use meld_core::{
-    ChunkProfile, IndexDb, TorrentV1, create_descriptor, serve_v1_file, serve_v1_file_listener,
-    serve_v1_file_listener_until_shutdown, serve_v1_file_until_shutdown, serve_v1_index_listener,
+    BtSeedOptions, ChunkProfile, IndexDb, TorrentV1, create_descriptor, serve_v1_file,
+    serve_v1_file_listener, serve_v1_file_listener_until_shutdown,
+    serve_v1_file_listener_until_shutdown_with_options, serve_v1_file_listener_with_options,
+    serve_v1_file_until_shutdown, serve_v1_index_listener, serve_v1_index_listener_with_options,
 };
 use sha1::{Digest, Sha1};
 use tempfile::tempdir;
@@ -103,6 +107,7 @@ fn verified_file_seeds_standard_blocks_and_reports_payload() {
 
     assert_eq!(rebuilt, bytes);
     assert!(report.source_verified);
+    assert_eq!(report.upload_scheduler, "unlimited");
     assert_eq!(report.successful_handshakes, 1);
     assert_eq!(report.block_requests, requests);
     assert_eq!(report.payload_bytes_sent, bytes.len() as u64);
@@ -158,6 +163,137 @@ fn file_seed_serves_two_peers_concurrently_with_a_bounded_pool() {
     assert_eq!(report.successful_handshakes, 2);
     assert_eq!(report.concurrent_connection_limit, 4);
     assert_eq!(report.peak_concurrent_connections, 2);
+    assert_eq!(report.protocol_errors, 0);
+}
+
+#[test]
+fn aggregate_upload_limit_uses_fifo_block_fairness_across_peers() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(32 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let torrent = torrent_for(&bytes, 32 * 1024);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_torrent = torrent.clone();
+    let server_descriptor = descriptor.clone();
+    let server_source = source.clone();
+    let server = thread::spawn(move || {
+        serve_v1_file_listener_with_options(
+            listener,
+            &server_torrent,
+            &server_descriptor,
+            &server_source,
+            BtSeedOptions {
+                max_connections: Some(2),
+                max_upload_bytes_per_second: Some(16 * 1024),
+            },
+        )
+        .unwrap()
+    });
+
+    let mut first = connect_interested_peer(address, &torrent);
+    let mut second = connect_interested_peer(address, &torrent);
+    first
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let first_request = block_request(0, 0, 16 * 1024);
+    let second_request = block_request(0, 16 * 1024, 16 * 1024);
+    let started = Instant::now();
+    send_message(&mut first, 6, &first_request);
+    send_message(&mut second, 6, &second_request);
+    let first_piece = read_message(&mut first);
+    let second_piece = read_message(&mut second);
+    let elapsed = started.elapsed();
+    assert_eq!(first_piece.0, 7);
+    assert_eq!(second_piece.0, 7);
+    assert_eq!(&first_piece.1[8..], &bytes[..16 * 1024]);
+    assert_eq!(&second_piece.1[8..], &bytes[16 * 1024..]);
+    send_message(&mut first, 3, &[]);
+    send_message(&mut second, 3, &[]);
+    let report = server.join().unwrap();
+
+    assert!(elapsed >= Duration::from_millis(850), "elapsed={elapsed:?}");
+    assert_eq!(report.payload_bytes_sent, 32 * 1024);
+    assert_eq!(report.upload_rate_limit_bytes_per_second, Some(16 * 1024));
+    assert_eq!(report.upload_scheduler, "fifo-block-fair");
+    assert!(report.upload_throttle_wait_micros >= 850_000);
+    assert_eq!(report.protocol_errors, 0);
+}
+
+#[test]
+fn upload_limit_rejects_zero() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(32 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let torrent = torrent_for(&bytes, 32 * 1024);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+
+    let error = serve_v1_file_listener_with_options(
+        listener,
+        &torrent,
+        &descriptor,
+        &source,
+        BtSeedOptions {
+            max_connections: Some(0),
+            max_upload_bytes_per_second: Some(0),
+        },
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("greater than zero"));
+}
+
+#[test]
+fn shutdown_interrupts_a_long_upload_throttle_wait() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(32 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let torrent = torrent_for(&bytes, 32 * 1024);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let server_shutdown = Arc::clone(&shutdown);
+    let server_torrent = torrent.clone();
+    let server_descriptor = descriptor.clone();
+    let server_source = source.clone();
+    let server = thread::spawn(move || {
+        serve_v1_file_listener_until_shutdown_with_options(
+            listener,
+            &server_torrent,
+            &server_descriptor,
+            &server_source,
+            BtSeedOptions {
+                max_connections: Some(1),
+                max_upload_bytes_per_second: Some(1),
+            },
+            &server_shutdown,
+        )
+        .unwrap()
+    });
+
+    let mut peer = connect_interested_peer(address, &torrent);
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    send_message(&mut peer, 6, &block_request(0, 0, 16 * 1024));
+    assert_eq!(read_message(&mut peer).0, 7);
+    send_message(&mut peer, 6, &block_request(0, 16 * 1024, 16 * 1024));
+    thread::sleep(Duration::from_millis(125));
+    let shutdown_started = Instant::now();
+    shutdown.store(true, Ordering::Relaxed);
+    let report = server.join().unwrap();
+
+    assert!(shutdown_started.elapsed() < Duration::from_secs(1));
+    assert!(report.shutdown_requested);
+    assert_eq!(report.block_requests, 1);
+    assert_eq!(report.payload_bytes_sent, 16 * 1024);
     assert_eq!(report.protocol_errors, 0);
 }
 
@@ -326,6 +462,59 @@ fn shutdown_flag_stops_seed_and_announces_stopped_without_a_peer() {
 }
 
 #[test]
+fn running_seed_reannounces_at_the_tracker_interval_without_an_event_parameter() {
+    let root = tempdir().unwrap();
+    let bytes = deterministic_bytes(64 * 1024);
+    let source = root.path().join("seed.bin");
+    fs::write(&source, &bytes).unwrap();
+    let descriptor = create_descriptor(&source, ChunkProfile::named("s").unwrap()).unwrap();
+    let tracker_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tracker_address = tracker_listener.local_addr().unwrap();
+    let mut torrent = torrent_for(&bytes, 32 * 1024);
+    torrent.announce = Some(format!("http://{tracker_address}/announce"));
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let tracker = thread::spawn(move || {
+        serve_mock_tracker_with_interval_and_notify(tracker_listener, 3, 1, Some(&observed_tx))
+    });
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let server_shutdown = Arc::clone(&shutdown);
+    let server_torrent = torrent.clone();
+    let server_descriptor = descriptor.clone();
+    let server_source = source.clone();
+    let server = thread::spawn(move || {
+        serve_v1_file_until_shutdown(
+            &server_torrent,
+            &server_descriptor,
+            &server_source,
+            "127.0.0.1:0".parse().unwrap(),
+            false,
+            None,
+            &server_shutdown,
+        )
+        .unwrap()
+    });
+
+    observed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    observed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    shutdown.store(true, Ordering::Relaxed);
+    let report = server.join().unwrap();
+    let requests = tracker.join().unwrap();
+
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].contains("event=started"));
+    assert!(!requests[1].contains("event="));
+    assert!(requests[2].contains("event=stopped"));
+    assert_eq!(
+        report
+            .tracker_announces
+            .iter()
+            .map(|attempt| attempt.event.as_str())
+            .collect::<Vec<_>>(),
+        vec!["started", "update", "stopped"]
+    );
+}
+
+#[test]
 fn index_seed_reconstructs_pieces_on_demand_from_separate_chunk_files() {
     let root = tempdir().unwrap();
     let bytes = deterministic_bytes(700 * 1024 + 321);
@@ -358,12 +547,15 @@ fn index_seed_reconstructs_pieces_on_demand_from_separate_chunk_files() {
     let server_database = database.clone();
     let server = thread::spawn(move || {
         let index = IndexDb::open(&server_database).unwrap();
-        serve_v1_index_listener(
+        serve_v1_index_listener_with_options(
             listener,
             &server_torrent,
             &server_descriptor,
             &index,
-            Some(1),
+            BtSeedOptions {
+                max_connections: Some(1),
+                max_upload_bytes_per_second: Some(32 * 1024 * 1024),
+            },
         )
         .unwrap()
     });
@@ -409,6 +601,12 @@ fn index_seed_reconstructs_pieces_on_demand_from_separate_chunk_files() {
     assert_eq!(report.advertised_pieces, torrent.piece_sha1.len() as u64);
     assert_eq!(report.block_requests, requests);
     assert_eq!(report.payload_bytes_sent, bytes.len() as u64);
+    assert_eq!(
+        report.upload_rate_limit_bytes_per_second,
+        Some(32 * 1024 * 1024)
+    );
+    assert_eq!(report.upload_scheduler, "fifo-block-fair");
+    assert!(report.upload_throttle_wait_micros > 0);
     assert!(report.on_demand_local_chunks_read > 0);
     assert!(report.on_demand_local_bytes_read >= bytes.len() as u64);
     assert_eq!(report.protocol_errors, 0);
@@ -512,6 +710,24 @@ fn send_message(stream: &mut TcpStream, message: u8, payload: &[u8]) {
     stream.write_all(payload).unwrap();
 }
 
+fn connect_interested_peer(address: SocketAddr, torrent: &TorrentV1) -> TcpStream {
+    let mut stream = TcpStream::connect(address).unwrap();
+    send_handshake(&mut stream, torrent);
+    read_handshake(&mut stream, torrent);
+    assert_eq!(read_message(&mut stream).0, 5);
+    send_message(&mut stream, 2, &[]);
+    assert_eq!(read_message(&mut stream), (1, Vec::new()));
+    stream
+}
+
+fn block_request(piece: u32, begin: u32, length: u32) -> Vec<u8> {
+    let mut request = Vec::with_capacity(12);
+    request.extend_from_slice(&piece.to_be_bytes());
+    request.extend_from_slice(&begin.to_be_bytes());
+    request.extend_from_slice(&length.to_be_bytes());
+    request
+}
+
 fn read_message(stream: &mut TcpStream) -> (u8, Vec<u8>) {
     let mut length = [0_u8; 4];
     stream.read_exact(&mut length).unwrap();
@@ -521,6 +737,23 @@ fn read_message(stream: &mut TcpStream) -> (u8, Vec<u8>) {
 }
 
 fn serve_mock_tracker(listener: TcpListener, count: usize) -> Vec<String> {
+    serve_mock_tracker_with_interval(listener, count, 60)
+}
+
+fn serve_mock_tracker_with_interval(
+    listener: TcpListener,
+    count: usize,
+    interval: u64,
+) -> Vec<String> {
+    serve_mock_tracker_with_interval_and_notify(listener, count, interval, None)
+}
+
+fn serve_mock_tracker_with_interval_and_notify(
+    listener: TcpListener,
+    count: usize,
+    interval: u64,
+    observed: Option<&mpsc::Sender<()>>,
+) -> Vec<String> {
     let mut requests = Vec::new();
     for _ in 0..count {
         let (mut stream, _) = listener.accept().unwrap();
@@ -535,14 +768,17 @@ fn serve_mock_tracker(listener: TcpListener, count: usize) -> Vec<String> {
             }
         }
         requests.push(String::from_utf8(request).unwrap());
-        let body = b"d8:intervali60e5:peers0:e";
+        if let Some(observed) = observed {
+            observed.send(()).unwrap();
+        }
+        let body = format!("d8:intervali{interval}e5:peers0:e");
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .unwrap();
-        stream.write_all(body).unwrap();
+        stream.write_all(body.as_bytes()).unwrap();
     }
     requests
 }

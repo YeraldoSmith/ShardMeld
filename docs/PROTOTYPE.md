@@ -71,9 +71,11 @@ The descriptor is not yet signed and must not be treated as publisher-authentica
   torrents are rejected explicitly.
 - `bt-fetch-magnet` requires trusted local `.torrent` metadata. It does not yet
   fetch metadata from peers, use DHT, or accept v2 `btmh` magnets.
-- The v2.0 upload server is a correctness-first seed. It handles connections
-  serially, has no production choking or tit-for-tat policy, and does not
-  announce itself to a tracker automatically.
+- The v2.0 upload server is a correctness-first seed with a bounded four-peer
+  worker pool. An optional aggregate byte-rate limit is shared through FIFO
+  block reservations, but there is no production tit-for-tat or optimistic-
+  unchoke policy. HTTP(S)/UDP Tracker registration includes `started`, periodic
+  interval-driven renewal, and best-effort `stopped` on a clean exit.
 - Indexed seeding performs a full preflight read of locally covered bytes and
   currently keeps only the most recently reconstructed Piece in memory. It may
   reread overlapping CDC chunks and is not yet I/O optimized.

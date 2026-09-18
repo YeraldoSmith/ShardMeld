@@ -1,0 +1,17 @@
+{
+  "engine_version": "2.0.0",
+  "package_sha256": "d1d0ea4f19c989b3c65f29e734983d7fa2edbf3c7549b54c39d5cb3bb1dd74cd",
+  "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+  "target_bytes": 9515341,
+  "pieces_verified": 37,
+  "block_requests": 581,
+  "payload_bytes_sent": 9515341,
+  "upload_rate_limit_bytes_per_second": 8388608,
+  "upload_scheduler": "fifo-block-fair",
+  "upload_throttle_wait_micros": 1516014,
+  "downloader_wall_time_seconds": 1.95,
+  "protocol_errors": 0,
+  "output_sha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "source_verified": true,
+  "output_verified": true
+}

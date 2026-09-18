@@ -1,11 +1,13 @@
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,9 @@ use sha1::{Digest, Sha1};
 
 use crate::bittorrent::{plan_v1_bridge, read_verified_chunk};
 use crate::bt_peer::generate_peer_id;
-use crate::bt_tracker::{BtTrackerLifecycleAttempt, start_seed_trackers, stop_seed_trackers};
+use crate::bt_tracker::{
+    BtTrackerLifecycleAttempt, SeedTrackerHeartbeat, start_seed_trackers, stop_seed_trackers,
+};
 use crate::{
     BtBridgeReport, IndexDb, REPORT_FORMAT, REPORT_VERSION, TargetDescriptor, TorrentV1,
     sha256_file,
@@ -57,6 +61,12 @@ pub struct BtSeedReport {
     pub concurrent_connection_limit: u64,
     #[serde(default)]
     pub peak_concurrent_connections: u64,
+    #[serde(default)]
+    pub upload_rate_limit_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    pub upload_scheduler: String,
+    #[serde(default)]
+    pub upload_throttle_wait_micros: u64,
     pub source_verified: bool,
     #[serde(default)]
     pub shutdown_requested: bool,
@@ -90,15 +100,42 @@ pub struct BtIndexSeedReport {
     #[serde(default)]
     pub peak_concurrent_connections: u64,
     #[serde(default)]
+    pub upload_rate_limit_bytes_per_second: Option<u64>,
+    #[serde(default)]
+    pub upload_scheduler: String,
+    #[serde(default)]
+    pub upload_throttle_wait_micros: u64,
+    #[serde(default)]
     pub shutdown_requested: bool,
     #[serde(default)]
     pub tracker_announces: Vec<BtTrackerLifecycleAttempt>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BtSeedOptions {
+    pub max_connections: Option<u64>,
+    pub max_upload_bytes_per_second: Option<u64>,
+}
+
+struct BtFileSeedStart {
+    source_sha256: String,
+    local_peer_id: [u8; 20],
+    options: BtSeedOptions,
+}
+
+struct BtFilePeerContext<'a> {
+    torrent: &'a TorrentV1,
+    source: &'a Path,
+    local_peer_id: &'a [u8; 20],
+    shutdown: Option<&'a AtomicBool>,
+    uploaded_counter: Option<&'a AtomicU64>,
+    upload_limiter: &'a UploadLimiter,
+}
+
 struct BtIndexSeedStart {
     plan: BtBridgeReport,
     local_peer_id: [u8; 20],
-    max_connections: Option<u64>,
+    options: BtSeedOptions,
 }
 
 struct BtIndexPeerContext<'a> {
@@ -107,6 +144,8 @@ struct BtIndexPeerContext<'a> {
     available: &'a [bool],
     local_peer_id: &'a [u8; 20],
     shutdown: Option<&'a AtomicBool>,
+    uploaded_counter: Option<&'a AtomicU64>,
+    upload_limiter: &'a UploadLimiter,
 }
 
 #[derive(Debug, Default)]
@@ -115,6 +154,7 @@ struct BtSeedConnectionStats {
     block_requests: u64,
     payload_bytes_sent: u64,
     cancel_messages_received: u64,
+    upload_throttle_wait_micros: u64,
 }
 
 #[derive(Debug, Default)]
@@ -125,6 +165,114 @@ struct BtIndexSeedConnectionStats {
     on_demand_local_chunks_read: u64,
     on_demand_local_bytes_read: u64,
     cancel_messages_received: u64,
+    upload_throttle_wait_micros: u64,
+}
+
+#[derive(Debug)]
+struct UploadLimiter {
+    rate_bytes_per_second: Option<u64>,
+    state: Mutex<UploadLimiterState>,
+    ready: Condvar,
+}
+
+#[derive(Debug)]
+struct UploadLimiterState {
+    next_ticket: u64,
+    serving_ticket: u64,
+    cancelled_tickets: BTreeSet<u64>,
+    next_send: Instant,
+}
+
+impl UploadLimiter {
+    fn new(rate_bytes_per_second: Option<u64>) -> Result<Self> {
+        validate_upload_rate(rate_bytes_per_second)?;
+        Ok(Self {
+            rate_bytes_per_second,
+            state: Mutex::new(UploadLimiterState {
+                next_ticket: 0,
+                serving_ticket: 0,
+                cancelled_tickets: BTreeSet::new(),
+                next_send: Instant::now(),
+            }),
+            ready: Condvar::new(),
+        })
+    }
+
+    fn reserve(&self, bytes: u64, shutdown: Option<&AtomicBool>) -> Result<Option<u64>> {
+        let Some(rate) = self.rate_bytes_per_second else {
+            return Ok(Some(0));
+        };
+        let started = Instant::now();
+        let mut state = self.state.lock().expect("upload limiter lock poisoned");
+        let ticket = state.next_ticket;
+        state.next_ticket += 1;
+        loop {
+            if is_shutdown(shutdown) {
+                cancel_upload_ticket(&mut state, ticket);
+                self.ready.notify_all();
+                return Ok(None);
+            }
+            if ticket != state.serving_ticket {
+                state = self
+                    .ready
+                    .wait_timeout(state, SHUTDOWN_POLL_INTERVAL)
+                    .expect("upload limiter lock poisoned")
+                    .0;
+                continue;
+            }
+            let now = Instant::now();
+            if state.next_send > now {
+                let wait = (state.next_send - now).min(SHUTDOWN_POLL_INTERVAL);
+                state = self
+                    .ready
+                    .wait_timeout(state, wait)
+                    .expect("upload limiter lock poisoned")
+                    .0;
+                continue;
+            }
+            let nanos = u128::from(bytes)
+                .saturating_mul(1_000_000_000)
+                .div_ceil(u128::from(rate))
+                .max(1)
+                .min(u128::from(u64::MAX));
+            state.next_send = now + Duration::from_nanos(nanos as u64);
+            advance_upload_ticket(&mut state);
+            self.ready.notify_all();
+            return Ok(Some(
+                started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+            ));
+        }
+    }
+}
+
+fn validate_upload_rate(rate_bytes_per_second: Option<u64>) -> Result<()> {
+    if rate_bytes_per_second == Some(0) {
+        bail!("BT seed upload rate limit must be greater than zero");
+    }
+    Ok(())
+}
+
+fn upload_scheduler_name(rate_bytes_per_second: Option<u64>) -> &'static str {
+    if rate_bytes_per_second.is_some() {
+        "fifo-block-fair"
+    } else {
+        "unlimited"
+    }
+}
+
+fn cancel_upload_ticket(state: &mut UploadLimiterState, ticket: u64) {
+    if ticket == state.serving_ticket {
+        advance_upload_ticket(state);
+    } else if ticket > state.serving_ticket {
+        state.cancelled_tickets.insert(ticket);
+    }
+}
+
+fn advance_upload_ticket(state: &mut UploadLimiterState) {
+    state.serving_ticket += 1;
+    while state.cancelled_tickets.remove(&state.serving_ticket) {
+        state.serving_ticket += 1;
+    }
 }
 
 pub fn serve_v1_file(
@@ -135,13 +283,35 @@ pub fn serve_v1_file(
     allow_non_loopback: bool,
     max_connections: Option<u64>,
 ) -> Result<BtSeedReport> {
+    serve_v1_file_with_options(
+        torrent,
+        descriptor,
+        source,
+        bind,
+        allow_non_loopback,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+    )
+}
+
+pub fn serve_v1_file_with_options(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    options: BtSeedOptions,
+) -> Result<BtSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     serve_v1_file_controlled(
         torrent,
         descriptor,
         source,
         bind,
         allow_non_loopback,
-        max_connections,
+        options,
         None,
     )
 }
@@ -155,13 +325,36 @@ pub fn serve_v1_file_until_shutdown(
     max_connections: Option<u64>,
     shutdown: &AtomicBool,
 ) -> Result<BtSeedReport> {
+    serve_v1_file_until_shutdown_with_options(
+        torrent,
+        descriptor,
+        source,
+        bind,
+        allow_non_loopback,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+        shutdown,
+    )
+}
+
+pub fn serve_v1_file_until_shutdown_with_options(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    options: BtSeedOptions,
+    shutdown: &AtomicBool,
+) -> Result<BtSeedReport> {
     serve_v1_file_controlled(
         torrent,
         descriptor,
         source,
         bind,
         allow_non_loopback,
-        max_connections,
+        options,
         Some(shutdown),
     )
 }
@@ -172,9 +365,10 @@ fn serve_v1_file_controlled(
     source: &Path,
     bind: SocketAddr,
     allow_non_loopback: bool,
-    max_connections: Option<u64>,
+    options: BtSeedOptions,
     shutdown: Option<&AtomicBool>,
 ) -> Result<BtSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT seed bind without --allow-non-loopback");
     }
@@ -184,25 +378,35 @@ fn serve_v1_file_controlled(
     let local_peer_id = generate_peer_id()?;
     let (active_trackers, mut tracker_announces) =
         start_seed_trackers(torrent, &local_peer_id, bind.port());
+    let uploaded = Arc::new(AtomicU64::new(0));
+    let tracker_heartbeat = SeedTrackerHeartbeat::start(
+        &active_trackers,
+        torrent,
+        &local_peer_id,
+        bind.port(),
+        Arc::clone(&uploaded),
+    );
     let result = serve_v1_file_listener_verified(
         listener,
         torrent,
         source,
-        &source_sha256,
-        max_connections,
-        &local_peer_id,
+        BtFileSeedStart {
+            source_sha256,
+            local_peer_id,
+            options,
+        },
         shutdown,
+        Some(uploaded.as_ref()),
     );
-    let uploaded = result
-        .as_ref()
-        .map(|report| report.payload_bytes_sent)
-        .unwrap_or(0);
+    if let Some(tracker_heartbeat) = tracker_heartbeat {
+        tracker_announces.extend(tracker_heartbeat.finish());
+    }
     tracker_announces.extend(stop_seed_trackers(
         &active_trackers,
         torrent,
         &local_peer_id,
         bind.port(),
-        uploaded,
+        uploaded.load(Ordering::Relaxed),
     ));
     result.map(|mut report| {
         report.tracker_announces = tracker_announces;
@@ -217,15 +421,38 @@ pub fn serve_v1_file_listener(
     source: &Path,
     max_connections: Option<u64>,
 ) -> Result<BtSeedReport> {
+    serve_v1_file_listener_with_options(
+        listener,
+        torrent,
+        descriptor,
+        source,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+    )
+}
+
+pub fn serve_v1_file_listener_with_options(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    options: BtSeedOptions,
+) -> Result<BtSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     let source_sha256 = validate_seed_source(torrent, descriptor, source)?;
     let local_peer_id = generate_peer_id()?;
     serve_v1_file_listener_verified(
         listener,
         torrent,
         source,
-        &source_sha256,
-        max_connections,
-        &local_peer_id,
+        BtFileSeedStart {
+            source_sha256,
+            local_peer_id,
+            options,
+        },
+        None,
         None,
     )
 }
@@ -238,16 +465,41 @@ pub fn serve_v1_file_listener_until_shutdown(
     max_connections: Option<u64>,
     shutdown: &AtomicBool,
 ) -> Result<BtSeedReport> {
+    serve_v1_file_listener_until_shutdown_with_options(
+        listener,
+        torrent,
+        descriptor,
+        source,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+        shutdown,
+    )
+}
+
+pub fn serve_v1_file_listener_until_shutdown_with_options(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    source: &Path,
+    options: BtSeedOptions,
+    shutdown: &AtomicBool,
+) -> Result<BtSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     let source_sha256 = validate_seed_source(torrent, descriptor, source)?;
     let local_peer_id = generate_peer_id()?;
     serve_v1_file_listener_verified(
         listener,
         torrent,
         source,
-        &source_sha256,
-        max_connections,
-        &local_peer_id,
+        BtFileSeedStart {
+            source_sha256,
+            local_peer_id,
+            options,
+        },
         Some(shutdown),
+        None,
     )
 }
 
@@ -255,11 +507,11 @@ fn serve_v1_file_listener_verified(
     listener: TcpListener,
     torrent: &TorrentV1,
     source: &Path,
-    source_sha256: &str,
-    max_connections: Option<u64>,
-    local_peer_id: &[u8; 20],
+    start: BtFileSeedStart,
     shutdown: Option<&AtomicBool>,
+    uploaded_counter: Option<&AtomicU64>,
 ) -> Result<BtSeedReport> {
+    let upload_limiter = UploadLimiter::new(start.options.max_upload_bytes_per_second)?;
     let bind = listener.local_addr()?;
     if shutdown.is_some() {
         listener.set_nonblocking(true)?;
@@ -271,7 +523,7 @@ fn serve_v1_file_listener_verified(
         bind,
         source: source.to_path_buf(),
         info_hash_sha1: torrent.info_hash_sha1.clone(),
-        source_sha256: source_sha256.to_owned(),
+        source_sha256: start.source_sha256,
         advertised_pieces: torrent.piece_sha1.len() as u64,
         connections: 0,
         successful_handshakes: 0,
@@ -281,6 +533,10 @@ fn serve_v1_file_listener_verified(
         protocol_errors: 0,
         concurrent_connection_limit: MAX_ACTIVE_UPLOAD_CONNECTIONS as u64,
         peak_concurrent_connections: 0,
+        upload_rate_limit_bytes_per_second: start.options.max_upload_bytes_per_second,
+        upload_scheduler: upload_scheduler_name(start.options.max_upload_bytes_per_second)
+            .to_owned(),
+        upload_throttle_wait_micros: 0,
         source_verified: true,
         shutdown_requested: false,
         tracker_announces: Vec::new(),
@@ -293,18 +549,31 @@ fn serve_v1_file_listener_verified(
         loop {
             while let Ok(result) = completed_rx.try_recv() {
                 active -= 1;
-                merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
+                merge_file_connection(
+                    &mut report,
+                    result,
+                    start.options.max_connections,
+                    &mut fatal_error,
+                );
             }
             if fatal_error.is_some()
                 || is_shutdown(shutdown)
-                || max_connections.is_some_and(|limit| report.connections >= limit)
+                || start
+                    .options
+                    .max_connections
+                    .is_some_and(|limit| report.connections >= limit)
             {
                 break;
             }
             if active >= MAX_ACTIVE_UPLOAD_CONNECTIONS {
                 let result = completed_rx.recv().context("wait for BT seed worker")?;
                 active -= 1;
-                merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
+                merge_file_connection(
+                    &mut report,
+                    result,
+                    start.options.max_connections,
+                    &mut fatal_error,
+                );
                 continue;
             }
             let (mut stream, _) = match listener.accept() {
@@ -326,15 +595,21 @@ fn serve_v1_file_listener_verified(
             }))?;
             stream.set_write_timeout(Some(PEER_TIMEOUT))?;
             let completed_tx = completed_tx.clone();
+            let upload_limiter = &upload_limiter;
+            let local_peer_id = &start.local_peer_id;
             scope.spawn(move || {
                 let mut stats = BtSeedConnectionStats::default();
                 let error = serve_peer(
                     &mut stream,
-                    torrent,
-                    source,
-                    local_peer_id,
                     &mut stats,
-                    shutdown,
+                    BtFilePeerContext {
+                        torrent,
+                        source,
+                        local_peer_id,
+                        shutdown,
+                        uploaded_counter,
+                        upload_limiter,
+                    },
                 )
                 .err();
                 let _ = completed_tx.send((stats, error));
@@ -346,7 +621,12 @@ fn serve_v1_file_listener_verified(
                 .recv()
                 .context("join remaining BT seed worker")?;
             active -= 1;
-            merge_file_connection(&mut report, result, max_connections, &mut fatal_error);
+            merge_file_connection(
+                &mut report,
+                result,
+                start.options.max_connections,
+                &mut fatal_error,
+            );
         }
         Ok(())
     })?;
@@ -365,13 +645,35 @@ pub fn serve_v1_index(
     allow_non_loopback: bool,
     max_connections: Option<u64>,
 ) -> Result<BtIndexSeedReport> {
+    serve_v1_index_with_options(
+        torrent,
+        descriptor,
+        index,
+        bind,
+        allow_non_loopback,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+    )
+}
+
+pub fn serve_v1_index_with_options(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    options: BtSeedOptions,
+) -> Result<BtIndexSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     serve_v1_index_controlled(
         torrent,
         descriptor,
         index,
         bind,
         allow_non_loopback,
-        max_connections,
+        options,
         None,
     )
 }
@@ -385,13 +687,36 @@ pub fn serve_v1_index_until_shutdown(
     max_connections: Option<u64>,
     shutdown: &AtomicBool,
 ) -> Result<BtIndexSeedReport> {
+    serve_v1_index_until_shutdown_with_options(
+        torrent,
+        descriptor,
+        index,
+        bind,
+        allow_non_loopback,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+        shutdown,
+    )
+}
+
+pub fn serve_v1_index_until_shutdown_with_options(
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    bind: SocketAddr,
+    allow_non_loopback: bool,
+    options: BtSeedOptions,
+    shutdown: &AtomicBool,
+) -> Result<BtIndexSeedReport> {
     serve_v1_index_controlled(
         torrent,
         descriptor,
         index,
         bind,
         allow_non_loopback,
-        max_connections,
+        options,
         Some(shutdown),
     )
 }
@@ -402,9 +727,10 @@ fn serve_v1_index_controlled(
     index: &IndexDb,
     bind: SocketAddr,
     allow_non_loopback: bool,
-    max_connections: Option<u64>,
+    options: BtSeedOptions,
     shutdown: Option<&AtomicBool>,
 ) -> Result<BtIndexSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     if !bind.ip().is_loopback() && !allow_non_loopback {
         bail!("refusing non-loopback BT index seed bind without --allow-non-loopback");
     }
@@ -417,6 +743,14 @@ fn serve_v1_index_controlled(
     let local_peer_id = generate_peer_id()?;
     let (active_trackers, mut tracker_announces) =
         start_seed_trackers(torrent, &local_peer_id, bind.port());
+    let uploaded = Arc::new(AtomicU64::new(0));
+    let tracker_heartbeat = SeedTrackerHeartbeat::start(
+        &active_trackers,
+        torrent,
+        &local_peer_id,
+        bind.port(),
+        Arc::clone(&uploaded),
+    );
     let result = serve_v1_index_listener_preflighted(
         listener,
         torrent,
@@ -425,20 +759,20 @@ fn serve_v1_index_controlled(
         BtIndexSeedStart {
             plan,
             local_peer_id,
-            max_connections,
+            options,
         },
         shutdown,
+        Some(uploaded.as_ref()),
     );
-    let uploaded = result
-        .as_ref()
-        .map(|report| report.payload_bytes_sent)
-        .unwrap_or(0);
+    if let Some(tracker_heartbeat) = tracker_heartbeat {
+        tracker_announces.extend(tracker_heartbeat.finish());
+    }
     tracker_announces.extend(stop_seed_trackers(
         &active_trackers,
         torrent,
         &local_peer_id,
         bind.port(),
-        uploaded,
+        uploaded.load(Ordering::Relaxed),
     ));
     result.map(|mut report| {
         report.tracker_announces = tracker_announces;
@@ -453,6 +787,26 @@ pub fn serve_v1_index_listener(
     index: &IndexDb,
     max_connections: Option<u64>,
 ) -> Result<BtIndexSeedReport> {
+    serve_v1_index_listener_with_options(
+        listener,
+        torrent,
+        descriptor,
+        index,
+        BtSeedOptions {
+            max_connections,
+            max_upload_bytes_per_second: None,
+        },
+    )
+}
+
+pub fn serve_v1_index_listener_with_options(
+    listener: TcpListener,
+    torrent: &TorrentV1,
+    descriptor: &TargetDescriptor,
+    index: &IndexDb,
+    options: BtSeedOptions,
+) -> Result<BtIndexSeedReport> {
+    validate_upload_rate(options.max_upload_bytes_per_second)?;
     let plan = plan_v1_bridge(torrent, descriptor, index)?;
     if !plan.pieces.iter().any(|piece| piece.fully_local) {
         bail!("authorized index cannot reconstruct any verified torrent Piece");
@@ -466,8 +820,9 @@ pub fn serve_v1_index_listener(
         BtIndexSeedStart {
             plan,
             local_peer_id,
-            max_connections,
+            options,
         },
+        None,
         None,
     )
 }
@@ -479,7 +834,9 @@ fn serve_v1_index_listener_preflighted(
     index_db: &Path,
     start: BtIndexSeedStart,
     shutdown: Option<&AtomicBool>,
+    uploaded_counter: Option<&AtomicU64>,
 ) -> Result<BtIndexSeedReport> {
+    let upload_limiter = UploadLimiter::new(start.options.max_upload_bytes_per_second)?;
     let available: Vec<bool> = start
         .plan
         .pieces
@@ -512,6 +869,10 @@ fn serve_v1_index_listener_preflighted(
         protocol_errors: 0,
         concurrent_connection_limit: MAX_ACTIVE_UPLOAD_CONNECTIONS as u64,
         peak_concurrent_connections: 0,
+        upload_rate_limit_bytes_per_second: start.options.max_upload_bytes_per_second,
+        upload_scheduler: upload_scheduler_name(start.options.max_upload_bytes_per_second)
+            .to_owned(),
+        upload_throttle_wait_micros: 0,
         shutdown_requested: false,
         tracker_announces: Vec::new(),
     };
@@ -526,13 +887,14 @@ fn serve_v1_index_listener_preflighted(
                 merge_index_connection(
                     &mut report,
                     result,
-                    start.max_connections,
+                    start.options.max_connections,
                     &mut fatal_error,
                 );
             }
             if fatal_error.is_some()
                 || is_shutdown(shutdown)
                 || start
+                    .options
                     .max_connections
                     .is_some_and(|limit| report.connections >= limit)
             {
@@ -546,7 +908,7 @@ fn serve_v1_index_listener_preflighted(
                 merge_index_connection(
                     &mut report,
                     result,
-                    start.max_connections,
+                    start.options.max_connections,
                     &mut fatal_error,
                 );
                 continue;
@@ -572,6 +934,7 @@ fn serve_v1_index_listener_preflighted(
             let completed_tx = completed_tx.clone();
             let local_peer_id = &start.local_peer_id;
             let available = &available;
+            let upload_limiter = &upload_limiter;
             scope.spawn(move || {
                 let mut stats = BtIndexSeedConnectionStats::default();
                 let error = IndexDb::open(index_db)
@@ -586,6 +949,8 @@ fn serve_v1_index_listener_preflighted(
                                 available,
                                 local_peer_id,
                                 shutdown,
+                                uploaded_counter,
+                                upload_limiter,
                             },
                         )
                     })
@@ -599,7 +964,12 @@ fn serve_v1_index_listener_preflighted(
                 .recv()
                 .context("join remaining BT index seed worker")?;
             active -= 1;
-            merge_index_connection(&mut report, result, start.max_connections, &mut fatal_error);
+            merge_index_connection(
+                &mut report,
+                result,
+                start.options.max_connections,
+                &mut fatal_error,
+            );
         }
         Ok(())
     })?;
@@ -620,6 +990,7 @@ fn merge_file_connection(
     report.block_requests += stats.block_requests;
     report.payload_bytes_sent += stats.payload_bytes_sent;
     report.cancel_messages_received += stats.cancel_messages_received;
+    report.upload_throttle_wait_micros += stats.upload_throttle_wait_micros;
     if let Some(error) = error {
         report.protocol_errors += 1;
         if max_connections == Some(1) && fatal_error.is_none() {
@@ -640,6 +1011,7 @@ fn merge_index_connection(
     report.on_demand_local_chunks_read += stats.on_demand_local_chunks_read;
     report.on_demand_local_bytes_read += stats.on_demand_local_bytes_read;
     report.cancel_messages_received += stats.cancel_messages_received;
+    report.upload_throttle_wait_micros += stats.upload_throttle_wait_micros;
     if let Some(error) = error {
         report.protocol_errors += 1;
         if max_connections == Some(1) && fatal_error.is_none() {
@@ -682,26 +1054,28 @@ fn validate_seed_source(
 
 fn serve_peer(
     stream: &mut TcpStream,
-    torrent: &TorrentV1,
-    source: &Path,
-    local_peer_id: &[u8; 20],
     stats: &mut BtSeedConnectionStats,
-    shutdown: Option<&AtomicBool>,
+    context: BtFilePeerContext<'_>,
 ) -> Result<()> {
-    read_and_reply_handshake(stream, &torrent.info_hash_sha1, local_peer_id, shutdown)?;
+    read_and_reply_handshake(
+        stream,
+        &context.torrent.info_hash_sha1,
+        context.local_peer_id,
+        context.shutdown,
+    )?;
     stats.successful_handshakes += 1;
     send_message(
         stream,
         MESSAGE_BITFIELD,
-        &complete_bitfield(torrent.piece_sha1.len()),
+        &complete_bitfield(context.torrent.piece_sha1.len()),
     )?;
-    let mut file = File::open(source)?;
+    let mut file = File::open(context.source)?;
     let mut unchoked = false;
     loop {
-        if is_shutdown(shutdown) {
+        if is_shutdown(context.shutdown) {
             break;
         }
-        let message = match read_message(stream, shutdown) {
+        let message = match read_message(stream, context.shutdown) {
             Ok(message) => message,
             Err(error) if is_connection_end(&error) => break,
             Err(error) => return Err(error),
@@ -725,9 +1099,9 @@ fn serve_peer(
                 if !unchoked {
                     bail!("BT peer requested data before unchoke");
                 }
-                let (piece, begin, length) = parse_block_message(&payload, torrent)?;
+                let (piece, begin, length) = parse_block_message(&payload, context.torrent)?;
                 let absolute = u64::from(piece)
-                    .checked_mul(torrent.piece_length)
+                    .checked_mul(context.torrent.piece_length)
                     .and_then(|offset| offset.checked_add(u64::from(begin)))
                     .context("BT seed request offset overflow")?;
                 file.seek(SeekFrom::Start(absolute))?;
@@ -737,12 +1111,22 @@ fn serve_peer(
                 response.extend_from_slice(&piece.to_be_bytes());
                 response.extend_from_slice(&begin.to_be_bytes());
                 response.extend_from_slice(&block);
+                let Some(wait_micros) = context
+                    .upload_limiter
+                    .reserve(u64::from(length), context.shutdown)?
+                else {
+                    break;
+                };
                 send_message(stream, MESSAGE_PIECE, &response)?;
                 stats.block_requests += 1;
                 stats.payload_bytes_sent += u64::from(length);
+                stats.upload_throttle_wait_micros += wait_micros;
+                if let Some(uploaded_counter) = context.uploaded_counter {
+                    uploaded_counter.fetch_add(u64::from(length), Ordering::Relaxed);
+                }
             }
             MESSAGE_CANCEL => {
-                parse_block_message(&payload, torrent)?;
+                parse_block_message(&payload, context.torrent)?;
                 stats.cancel_messages_received += 1;
             }
             MESSAGE_CHOKE => expect_empty(&payload, "choke")?,
@@ -821,9 +1205,19 @@ fn serve_index_peer(
                 response.extend_from_slice(&piece.to_be_bytes());
                 response.extend_from_slice(&begin.to_be_bytes());
                 response.extend_from_slice(block);
+                let Some(wait_micros) = context
+                    .upload_limiter
+                    .reserve(u64::from(length), context.shutdown)?
+                else {
+                    break;
+                };
                 send_message(stream, MESSAGE_PIECE, &response)?;
                 stats.block_requests += 1;
                 stats.payload_bytes_sent += u64::from(length);
+                stats.upload_throttle_wait_micros += wait_micros;
+                if let Some(uploaded_counter) = context.uploaded_counter {
+                    uploaded_counter.fetch_add(u64::from(length), Ordering::Relaxed);
+                }
             }
             MESSAGE_CANCEL => {
                 parse_block_message(&payload, context.torrent)?;

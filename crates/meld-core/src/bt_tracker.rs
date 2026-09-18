@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread::{self, JoinHandle, Thread};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -53,6 +56,108 @@ pub struct BtTrackerLifecycleAttempt {
     pub interval_seconds: Option<u64>,
     pub warning_message: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SeedTrackerSession {
+    tracker: String,
+    interval: Duration,
+    next_announce: Instant,
+}
+
+pub(crate) struct SeedTrackerHeartbeat {
+    stop: Arc<AtomicBool>,
+    worker_thread: Thread,
+    worker: JoinHandle<Vec<BtTrackerLifecycleAttempt>>,
+}
+
+impl SeedTrackerHeartbeat {
+    pub(crate) fn start(
+        sessions: &[SeedTrackerSession],
+        torrent: &TorrentV1,
+        peer_id: &[u8; 20],
+        port: u16,
+        uploaded: Arc<AtomicU64>,
+    ) -> Option<Self> {
+        if sessions.is_empty() {
+            return None;
+        }
+        let mut sessions = sessions.to_vec();
+        let torrent = torrent.clone();
+        let peer_id = *peer_id;
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let worker = thread::spawn(move || {
+            let mut attempts = Vec::new();
+            loop {
+                if worker_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let now = Instant::now();
+                let next_announce = sessions
+                    .iter()
+                    .map(|session| session.next_announce)
+                    .min()
+                    .expect("heartbeat has at least one tracker session");
+                if next_announce > now {
+                    thread::park_timeout(next_announce.duration_since(now));
+                    continue;
+                }
+                for session in sessions
+                    .iter_mut()
+                    .filter(|session| session.next_announce <= now)
+                {
+                    let display = redact_tracker_url(&session.tracker);
+                    match announce(
+                        &session.tracker,
+                        &torrent,
+                        &peer_id,
+                        tracker_key(&peer_id),
+                        port,
+                        TrackerCounters::new(0, 0, uploaded.load(Ordering::Relaxed)),
+                        TrackerEvent::Update,
+                    ) {
+                        Ok(response) => {
+                            session.interval = tracker_interval(response.interval);
+                            attempts.push(successful_lifecycle_attempt(
+                                &display,
+                                TrackerEvent::Update,
+                                &response,
+                            ));
+                        }
+                        Err(error) => attempts.push(failed_lifecycle_attempt(
+                            &display,
+                            TrackerEvent::Update,
+                            &format!("{error:#}"),
+                        )),
+                    }
+                    session.next_announce = Instant::now() + session.interval;
+                }
+            }
+            attempts
+        });
+        let worker_thread = worker.thread().clone();
+        Some(Self {
+            stop,
+            worker_thread,
+            worker,
+        })
+    }
+
+    pub(crate) fn finish(self) -> Vec<BtTrackerLifecycleAttempt> {
+        self.stop.store(true, Ordering::Relaxed);
+        self.worker_thread.unpark();
+        self.worker.join().unwrap_or_else(|_| {
+            vec![BtTrackerLifecycleAttempt {
+                event: TrackerEvent::Update.http_name().to_owned(),
+                tracker: "<tracker-heartbeat>".to_owned(),
+                success: false,
+                interval_seconds: None,
+                warning_message: None,
+                error: Some("tracker heartbeat worker panicked".to_owned()),
+            }]
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -329,7 +434,7 @@ pub(crate) fn start_seed_trackers(
     torrent: &TorrentV1,
     peer_id: &[u8; 20],
     port: u16,
-) -> (Vec<String>, Vec<BtTrackerLifecycleAttempt>) {
+) -> (Vec<SeedTrackerSession>, Vec<BtTrackerLifecycleAttempt>) {
     let tiers = if let Some(announce_list) = &torrent.announce_list {
         announce_list.clone()
     } else if let Some(announce) = &torrent.announce {
@@ -357,6 +462,7 @@ pub(crate) fn start_seed_trackers(
                 TrackerEvent::Started,
             ) {
                 Ok(response) => {
+                    let interval = tracker_interval(response.interval);
                     attempts.push(BtTrackerLifecycleAttempt {
                         event: TrackerEvent::Started.http_name().to_owned(),
                         tracker: display,
@@ -365,7 +471,11 @@ pub(crate) fn start_seed_trackers(
                         warning_message: response.warning_message,
                         error: None,
                     });
-                    active.push(tracker);
+                    active.push(SeedTrackerSession {
+                        tracker,
+                        interval,
+                        next_announce: Instant::now() + interval,
+                    });
                     break;
                 }
                 Err(error) => attempts.push(BtTrackerLifecycleAttempt {
@@ -383,7 +493,7 @@ pub(crate) fn start_seed_trackers(
 }
 
 pub(crate) fn stop_seed_trackers(
-    trackers: &[String],
+    trackers: &[SeedTrackerSession],
     torrent: &TorrentV1,
     peer_id: &[u8; 20],
     port: u16,
@@ -392,10 +502,10 @@ pub(crate) fn stop_seed_trackers(
     let key = tracker_key(peer_id);
     trackers
         .iter()
-        .map(|tracker| {
-            let display = redact_tracker_url(tracker);
+        .map(|session| {
+            let display = redact_tracker_url(&session.tracker);
             match announce(
-                tracker,
+                &session.tracker,
                 torrent,
                 peer_id,
                 key,
@@ -462,6 +572,7 @@ fn announce_tracker_event(
 
 #[derive(Debug, Clone, Copy)]
 enum TrackerEvent {
+    Update,
     Started,
     Completed,
     Stopped,
@@ -487,6 +598,7 @@ impl TrackerCounters {
 impl TrackerEvent {
     fn http_name(self) -> &'static str {
         match self {
+            Self::Update => "update",
             Self::Started => "started",
             Self::Completed => "completed",
             Self::Stopped => "stopped",
@@ -495,6 +607,7 @@ impl TrackerEvent {
 
     fn udp_value(self) -> u32 {
         match self {
+            Self::Update => 0,
             Self::Started => 2,
             Self::Completed => 1,
             Self::Stopped => 3,
@@ -568,15 +681,18 @@ fn announce_http(
     }
     let info_hash = decode_info_hash(torrent)?;
     let separator = if tracker.contains('?') { '&' } else { '?' };
-    let url = format!(
-        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded={}&downloaded={}&left={}&compact=1&numwant=50&key={key}&event={}",
+    let mut url = format!(
+        "{tracker}{separator}info_hash={}&peer_id={}&port={port}&uploaded={}&downloaded={}&left={}&compact=1&numwant=50&key={key}",
         percent_encode_bytes(&info_hash),
         percent_encode_bytes(peer_id),
         counters.uploaded,
         counters.downloaded,
         counters.left,
-        event.http_name(),
     );
+    if !matches!(event, TrackerEvent::Update) {
+        url.push_str("&event=");
+        url.push_str(event.http_name());
+    }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
@@ -593,6 +709,10 @@ fn announce_http(
         .read_to_vec()
         .context("read tracker response body")?;
     parse_tracker_response(&body)
+}
+
+fn tracker_interval(seconds: u64) -> Duration {
+    Duration::from_secs(seconds.max(1))
 }
 
 fn announce_udp(

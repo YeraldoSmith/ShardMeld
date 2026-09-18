@@ -8,7 +8,7 @@ repository. The canonical repository is
 
 - Product version: `2.0.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 68 tests. The BT/CDC suite has 44 tests, including
+- Automated verification: 72 tests. The BT/CDC suite has 48 tests, including
   the original 37; SMD adds 24 unit, invariant, persistence, and real
   CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
@@ -18,10 +18,14 @@ repository. The canonical repository is
 - Fresh-clone verification completed with Rust/Cargo `1.97.1` using locked
   dependencies. This is a tested toolchain, not a declared minimum supported
   Rust version.
-- Delivered binary: ad-hoc-signed macOS Apple Silicon executable in `dist/`.
-- External interoperability: unchanged qBittorrent `5.0.5` downloaded a
-  9,515,341-byte target from the final packaged ShardMeld 2.0 index seed; all
-  37 Pieces and the final SHA-256 verified.
+- Delivered binary: ad-hoc-signed macOS Apple Silicon executable in `dist/`,
+  SHA-256 `d1d0ea4f19c989b3c65f29e734983d7fa2edbf3c7549b54c39d5cb3bb1dd74cd`.
+- External interoperability baseline (2026-08-31): unchanged qBittorrent
+  `5.0.5` downloaded a 9,515,341-byte target from a packaged ShardMeld 2.0
+  index seed; all 37 Pieces and the final SHA-256 verified. The current
+  heartbeat/rate-limit package repeated the complete standard peer-wire flow
+  with a packaged ShardMeld receiver; qBittorrent was not rerun for this
+  hardening-only change.
 
 Run this immediately after cloning:
 
@@ -53,7 +57,7 @@ The Rust source is the canonical implementation; rebuild it for other targets.
 - `crates/meld-core/src/bt_peer.rs` — download peer wire, resume, four-peer
   scheduling, rarest-first, and safe Piece-level Endgame.
 - `crates/meld-core/src/bt_tracker.rs` — HTTP(S), UDP, and multitracker
-  discovery.
+  discovery plus interruptible seed heartbeat scheduling.
 - `crates/meld-core/src/magnet.rs` — v1 magnet parsing and trusted local
   metadata binding.
 - `crates/meld-core/src/bt_seed.rs` — verified complete-file seeding and 2.0
@@ -72,6 +76,8 @@ The Rust source is the canonical implementation; rebuild it for other targets.
 - `experiments/sqlite-3.53.3-to-3.53.4/` — real-file and qBittorrent evidence.
 - `experiments/smd-v01-devnet/` — final release-build economy scenario and
   persistence evidence, with explicit evidence limits.
+- `experiments/seed-heartbeat-rate-limit-v20/` — packaged seed heartbeat,
+  aggregate upload-limit, shutdown-interrupt, and exact-transfer evidence.
 - `scripts/` — reproducible local smoke and profile runners.
 
 The repository intentionally includes retained experiment outputs, so a fresh
@@ -92,12 +98,14 @@ currently implements:
   is supplied;
 - verified full-file upload seeding;
 - on-demand upload of Pieces reconstructed from the authorized local index.
-- best-effort seed-side HTTP(S)/UDP Tracker `started` and clean-exit `stopped`
-  announces with redacted reports;
+- best-effort seed-side HTTP(S)/UDP Tracker `started`, interval-driven regular
+  re-announces, and clean-exit `stopped` announces with redacted reports;
 - downloader-side Tracker `completed` followed by `stopped` after a verified
   incomplete-to-complete transition;
 - Ctrl-C-aware seed shutdown and bounded concurrent upload service for up to
   four peers, for both complete-file and index-reconstructed seeds;
+- optional aggregate upload rate limiting with FIFO block fairness shared by
+  every active upload peer and interruptible throttle waits;
 - isolated SMD v0.1 devnet wallets and account-model transfers;
 - SQLite atomic ledger, permanent reserve, and fixed capped supply;
 - signed useful-contribution receipts, anti-replay checks, deterministic
@@ -107,9 +115,9 @@ currently implements:
 - deterministic invariant-checked ledger audit roots.
 
 Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
-multi-file torrents, and GUI work. Upload rate limiting and a full choking
-policy remain deferred; Tracker `stopped` cannot be guaranteed after an
-ungraceful kill or power loss. SMD mainnet, mainnet
+multi-file torrents, and GUI work. A full tit-for-tat choking and optimistic-
+unchoke policy remains deferred; Tracker `stopped` cannot be guaranteed after
+an ungraceful kill or power loss. SMD mainnet, mainnet
 wallet recovery, distributed consensus, mature Sybil resistance, real pricing,
 paid downloads, exchange integration, and real-asset value are also explicitly
 deferred.
@@ -149,12 +157,11 @@ deferred.
 
 The lowest-risk continuation of the BT-compatibility strategy is:
 
-1. add aggregate upload rate limits and an explicit fairness/choking policy to
-   the bounded four-peer upload pool;
-2. add tests with partial index availability and mixed external seeders;
-3. add periodic seed-side Tracker re-announces for long-running sessions;
-4. then consider BEP 9 metadata exchange and DHT;
-5. address multi-file v1 and BT v2/hybrid before building a GUI.
+1. add tests with partial index availability and mixed external seeders;
+2. evaluate a production tit-for-tat/optimistic-unchoke policy without
+   weakening the current FIFO aggregate limiter;
+3. then consider BEP 9 metadata exchange and DHT;
+4. address multi-file v1 and BT v2/hybrid before building a GUI.
 
 For SMD, keep the v0.1 economic rules frozen until its threat model is reviewed.
 The next safe work is stronger receipt audit/diversity research and optional
