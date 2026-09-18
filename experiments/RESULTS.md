@@ -297,7 +297,10 @@ renewal, aggregate upload rate limiting, a mature choking policy, or recovery
 from SIGKILL/power loss.
 
 The concurrency, split-frame, and failed-download lifecycle regression group
-also passed ten consecutive targeted runs after the full suite.
+also passed ten consecutive targeted runs after the full suite. After a busy
+Linux CI runner exposed a 50 ms timing assumption in the Endgame CANCEL mock,
+the mock was changed to wait for an explicit fast-peer completion signal; that
+targeted regression then passed twenty consecutive runs before the full suite.
 
 ## ShardMeld 2.0 hardening: periodic seed renewal and aggregate upload limit
 
