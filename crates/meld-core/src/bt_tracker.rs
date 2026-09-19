@@ -13,8 +13,8 @@ use url::Url;
 
 use crate::bt_peer::{fetch_v1_from_peers_with_peer_id, generate_peer_id};
 use crate::{
-    BtPeerFetchReport, IndexDb, REPORT_FORMAT, REPORT_VERSION, TargetDescriptor, TorrentV1,
-    TrackerResponse, parse_tracker_response, plan_v1_bridge,
+    BtMetadataFetchReport, BtPeerFetchReport, IndexDb, REPORT_FORMAT, REPORT_VERSION,
+    TargetDescriptor, TorrentV1, TrackerResponse, parse_tracker_response, plan_v1_bridge,
 };
 
 const MAX_TRACKER_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
@@ -171,6 +171,8 @@ pub struct BtTrackerFetchReport {
     pub tracker_attempts: Vec<BtDiscoveryAttempt>,
     #[serde(default)]
     pub tracker_lifecycle: Vec<BtTrackerLifecycleAttempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_exchange: Option<BtMetadataFetchReport>,
     pub peers_discovered: u64,
     pub peers_attempted: Vec<BtTrackerAttempt>,
     pub selected_peer: SocketAddr,
@@ -348,6 +350,7 @@ pub fn fetch_v1_via_tracker(
                     tracker_warning: selected.warning.clone(),
                     tracker_attempts,
                     tracker_lifecycle,
+                    metadata_exchange: None,
                     peers_discovered: discovered_peers.len() as u64,
                     peers_attempted: peer_attempts,
                     selected_peer: transfer.peer,
@@ -699,7 +702,7 @@ fn announce_http(
         .new_agent();
     let mut response = agent
         .get(&url)
-        .header("User-Agent", "ShardMeld/2.0.0")
+        .header("User-Agent", "ShardMeld/2.1.0")
         .call()
         .with_context(|| format!("HTTP tracker request {}", redact_tracker_url(tracker)))?;
     let body = response
@@ -942,7 +945,7 @@ mod tests {
     #[test]
     fn tier_shuffle_is_deterministic_for_one_session() {
         let tier = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        let peer_id = *b"-SM2000-123456789012";
+        let peer_id = *b"-SM2100-123456789012";
         assert_eq!(
             shuffled_tier(tier.clone(), &peer_id, 0),
             shuffled_tier(tier, &peer_id, 0)

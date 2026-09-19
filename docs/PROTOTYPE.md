@@ -1,4 +1,4 @@
-# Prototype 0.1 through ShardMeld 2.0
+# Prototype 0.1 through ShardMeld 2.1
 
 ## Scope
 
@@ -30,7 +30,7 @@ to be parsed.
 ShardMeld 1.1 accepts standard v1 magnet URIs with hexadecimal or base32
 `urn:btih`, deduplicates and validates HTTP(S)/UDP tracker parameters, verifies
 that local `.torrent` metadata has the exact same info hash, then uses the
-normal Tracker and Peer engine. BEP 9 metadata exchange is not implied.
+normal Tracker and Peer engine.
 
 ShardMeld 1.2 adds a standard v1 upload path for complete files. The source
 must match the descriptor SHA-256 and every torrent Piece SHA-1 before the
@@ -38,6 +38,12 @@ listener starts. ShardMeld 2.0 adds indexed upload: preflight determines which
 Pieces can be reconstructed and verified from authorized CDC locations, the
 bitfield advertises only those Pieces, and requests are served by reconstructing
 the Piece in memory. The complete target file need not exist in the index.
+
+ShardMeld 2.1 implements the BEP 10 extension handshake and bounded BEP 9
+`ut_metadata` retrieval from an explicitly supplied Peer. Raw metadata is
+requested in 16 KiB pieces, limited to 4 MiB, reassembled, and accepted only
+when its SHA-1 equals the magnet `btih`. Automatic discovery of the initial
+metadata Peer through DHT or another mechanism remains deferred.
 
 ## Metrics
 
@@ -69,8 +75,9 @@ The descriptor is not yet signed and must not be treated as publisher-authentica
 - Existing v1 torrents do not contain this CDC map. Full fine-grained reuse will require a sidecar or compatible extension.
 - `bt-plan` supports v1 single-file torrents only; multi-file, v2, and hybrid
   torrents are rejected explicitly.
-- `bt-fetch-magnet` requires trusted local `.torrent` metadata. It does not yet
-  fetch metadata from peers, use DHT, or accept v2 `btmh` magnets.
+- `bt-fetch-magnet` accepts either trusted local `.torrent` metadata or BEP 9
+  metadata from an explicitly supplied Peer. It does not discover that initial
+  Peer through DHT and does not accept v2 `btmh` magnets.
 - The v2.0 upload server is a correctness-first seed with a bounded four-peer
   worker pool. An optional aggregate byte-rate limit is shared through FIFO
   block reservations, but there is no production tit-for-tat or optimistic-

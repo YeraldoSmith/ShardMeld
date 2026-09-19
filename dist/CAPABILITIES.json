@@ -1,7 +1,7 @@
 {
   "report_format": "shardmeld-report",
   "report_version": 1,
-  "engine_version": "2.0.0",
+  "engine_version": "2.1.0",
   "implemented": [
     "authorized-local-cdc-index",
     "exact-sha256-reconstruction",
@@ -15,6 +15,7 @@
     "safe-piece-endgame",
     "standard-cancel",
     "magnet-v1-local-metadata-binding",
+    "direct-peer-bep9-metadata-exchange",
     "verified-file-upload-seeding",
     "on-demand-index-piece-seeding",
     "automatic-seed-tracker-start-stop",
@@ -37,7 +38,6 @@
   ],
   "deferred": [
     "dht",
-    "magnet-metadata-exchange",
     "peer-exchange",
     "bittorrent-v2-hybrid",
     "multi-file-torrents",
@@ -52,6 +52,7 @@
   "limits": [
     "explicitly-authorized-index-roots-only",
     "single-file-v1-torrents-only",
+    "bep9-metadata-peer-must-be-explicit",
     "piece-level-resume",
     "piece-level-endgame",
     "maximum-four-active-peers",

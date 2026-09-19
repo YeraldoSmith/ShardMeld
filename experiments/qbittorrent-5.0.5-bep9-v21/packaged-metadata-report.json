@@ -1,0 +1,14 @@
+{
+  "report_format": "shardmeld-report",
+  "report_version": 1,
+  "engine_version": "2.1.0",
+  "peer": "127.0.0.1:46019",
+  "remote_peer_id_hex": "2d7142353035302d4c544a36292d2a2d6a482d5f",
+  "remote_reserved_hex": "0000000000180005",
+  "remote_ut_metadata_id": 2,
+  "metadata_bytes": 811,
+  "metadata_pieces": 1,
+  "info_hash_sha1": "cbfe49f2c4d44a6a4823ebfa8c829351755d90bb",
+  "info_hash_verified": true,
+  "torrent_name": "sqlite3.c"
+}

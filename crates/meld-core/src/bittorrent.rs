@@ -219,6 +219,35 @@ fn parse_v1_torrent(bytes: &[u8]) -> Result<TorrentV1> {
     let root_dictionary = root.as_dictionary("torrent root")?;
     let info =
         dictionary_value(root_dictionary, b"info").context("torrent has no info dictionary")?;
+    let announce = dictionary_value(root_dictionary, b"announce")
+        .map(|node| node_utf8(node, "announce"))
+        .transpose()?;
+    let announce_list = dictionary_value(root_dictionary, b"announce-list")
+        .map(parse_announce_list)
+        .transpose()?;
+
+    parse_v1_info_node(info, &bytes[info.start..info.end], announce, announce_list)
+}
+
+pub(crate) fn parse_v1_info_dictionary(
+    bytes: &[u8],
+    announce: Option<String>,
+    announce_list: Option<Vec<Vec<String>>>,
+) -> Result<TorrentV1> {
+    let mut parser = Parser::new(bytes);
+    let info = parser.parse_node(0)?;
+    if parser.position != bytes.len() {
+        bail!("trailing bytes after bencoded info dictionary");
+    }
+    parse_v1_info_node(&info, bytes, announce, announce_list)
+}
+
+fn parse_v1_info_node(
+    info: &Node<'_>,
+    raw_info: &[u8],
+    announce: Option<String>,
+    announce_list: Option<Vec<Vec<String>>>,
+) -> Result<TorrentV1> {
     let info_dictionary = info.as_dictionary("info")?;
     if dictionary_value(info_dictionary, b"files").is_some() {
         bail!("multi-file v1 torrents are not supported by the v0.3 bridge");
@@ -266,22 +295,64 @@ fn parse_v1_torrent(bytes: &[u8]) -> Result<TorrentV1> {
         );
     }
     let piece_sha1 = pieces.chunks_exact(20).map(hex::encode).collect();
-    let announce = dictionary_value(root_dictionary, b"announce")
-        .map(|node| node_utf8(node, "announce"))
-        .transpose()?;
-    let announce_list = dictionary_value(root_dictionary, b"announce-list")
-        .map(parse_announce_list)
-        .transpose()?;
 
     Ok(TorrentV1 {
         name,
         total_length,
         piece_length,
         piece_sha1,
-        info_hash_sha1: hex::encode(Sha1::digest(&bytes[info.start..info.end])),
+        info_hash_sha1: hex::encode(Sha1::digest(raw_info)),
         announce,
         announce_list,
     })
+}
+
+pub(crate) fn parse_extension_handshake(bytes: &[u8]) -> Result<(u8, u64)> {
+    let mut parser = Parser::new(bytes);
+    let root = parser.parse_node(0)?;
+    if parser.position != bytes.len() {
+        bail!("trailing bytes after extension handshake");
+    }
+    let dictionary = root.as_dictionary("extension handshake")?;
+    let mappings = dictionary_value(dictionary, b"m")
+        .context("extension handshake has no m dictionary")?
+        .as_dictionary("extension handshake m")?;
+    let extension_id = node_u64(
+        dictionary_value(mappings, b"ut_metadata")
+            .context("peer does not advertise ut_metadata")?,
+        "ut_metadata extension id",
+    )?;
+    let extension_id = u8::try_from(extension_id)
+        .context("ut_metadata extension id is outside the one-byte range")?;
+    if extension_id == 0 {
+        bail!("peer advertised reserved extension id zero for ut_metadata");
+    }
+    let metadata_size = node_u64(
+        dictionary_value(dictionary, b"metadata_size")
+            .context("extension handshake has no metadata_size")?,
+        "metadata_size",
+    )?;
+    Ok((extension_id, metadata_size))
+}
+
+pub(crate) fn parse_metadata_message_header(
+    bytes: &[u8],
+) -> Result<(u64, u64, Option<u64>, usize)> {
+    let mut parser = Parser::new(bytes);
+    let root = parser.parse_node(0)?;
+    let dictionary = root.as_dictionary("ut_metadata message")?;
+    let message_type = node_u64(
+        dictionary_value(dictionary, b"msg_type").context("ut_metadata msg_type is missing")?,
+        "ut_metadata msg_type",
+    )?;
+    let piece = node_u64(
+        dictionary_value(dictionary, b"piece").context("ut_metadata piece is missing")?,
+        "ut_metadata piece",
+    )?;
+    let total_size = dictionary_value(dictionary, b"total_size")
+        .map(|node| node_u64(node, "ut_metadata total_size"))
+        .transpose()?;
+    Ok((message_type, piece, total_size, parser.position))
 }
 
 fn parse_announce_list(node: &Node<'_>) -> Result<Vec<Vec<String>>> {

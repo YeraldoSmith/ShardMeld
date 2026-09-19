@@ -6,9 +6,9 @@ repository. The canonical repository is
 
 ## Current verified baseline
 
-- Product version: `2.0.0`.
+- Product version: `2.1.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
-- Automated verification: 72 tests. The BT/CDC suite has 48 tests, including
+- Automated verification: 75 tests. The BT/CDC suite has 51 tests, including
   the original 37; SMD adds 24 unit, invariant, persistence, and real
   CLI-process tests.
 - GitHub Actions uses the pinned Rust `1.97.1` toolchain and runs formatting,
@@ -19,13 +19,16 @@ repository. The canonical repository is
   dependencies. This is a tested toolchain, not a declared minimum supported
   Rust version.
 - Delivered binary: ad-hoc-signed macOS Apple Silicon executable in `dist/`,
-  SHA-256 `d1d0ea4f19c989b3c65f29e734983d7fa2edbf3c7549b54c39d5cb3bb1dd74cd`.
+  SHA-256 `a28d5d3b0e4f084e425f4d31dcaa782b30926a94cafac81608d9c4fdb4f29b74`.
 - External interoperability baseline (2026-08-31): unchanged qBittorrent
   `5.0.5` downloaded a 9,515,341-byte target from a packaged ShardMeld 2.0
   index seed; all 37 Pieces and the final SHA-256 verified. The current
   heartbeat/rate-limit package repeated the complete standard peer-wire flow
   with a packaged ShardMeld receiver; qBittorrent was not rerun for this
   hardening-only change.
+- BEP 9 interoperability (2026-09-19): ShardMeld 2.1 fetched the 811-byte raw
+  `info` dictionary for the SQLite fixture from an unchanged qBittorrent 5.0.5
+  process isolated on loopback, then verified the expected v1 info hash.
 
 Run this immediately after cloning:
 
@@ -60,6 +63,8 @@ The Rust source is the canonical implementation; rebuild it for other targets.
   discovery plus interruptible seed heartbeat scheduling.
 - `crates/meld-core/src/magnet.rs` — v1 magnet parsing and trusted local
   metadata binding.
+- `crates/meld-core/src/bt_metadata.rs` — bounded BEP 10/BEP 9 handshake,
+  metadata Piece retrieval, reassembly, and info-hash verification.
 - `crates/meld-core/src/bt_seed.rs` — verified complete-file seeding and 2.0
   on-demand index Piece seeding.
 - `crates/meld-core/src/capabilities.rs` — canonical implemented/deferred/limit
@@ -78,6 +83,8 @@ The Rust source is the canonical implementation; rebuild it for other targets.
   persistence evidence, with explicit evidence limits.
 - `experiments/seed-heartbeat-rate-limit-v20/` — packaged seed heartbeat,
   aggregate upload-limit, shutdown-interrupt, and exact-transfer evidence.
+- `experiments/qbittorrent-5.0.5-bep9-v21/` — packaged direct BEP 9 metadata
+  exchange with an unchanged external client and explicit evidence limits.
 - `scripts/` — reproducible local smoke and profile runners.
 
 The repository intentionally includes retained experiment outputs, so a fresh
@@ -86,7 +93,7 @@ indexes, partial files, and local build state are ignored.
 
 ## Shipped scope
 
-The authoritative list is produced by `shardmeld capabilities`. ShardMeld 2.0
+The authoritative list is produced by `shardmeld capabilities`. ShardMeld 2.1
 currently implements:
 
 - explicitly authorized CDC indexing and exact SHA-256 reconstruction;
@@ -96,6 +103,8 @@ currently implements:
   work-conserving scheduling, and safe Piece-level Endgame with CANCEL;
 - v1 hexadecimal/base32 magnet entry when matching local `.torrent` metadata
   is supplied;
+- direct BEP 9 metadata exchange with an explicitly supplied Peer, including a
+  4 MiB safety limit and final v1 info-hash verification;
 - verified full-file upload seeding;
 - on-demand upload of Pieces reconstructed from the authorized local index.
 - best-effort seed-side HTTP(S)/UDP Tracker `started`, interval-driven regular
@@ -114,8 +123,8 @@ currently implements:
 - native macOS Keychain-backed devnet wallets with a separate explicit test-file path;
 - deterministic invariant-checked ledger audit roots.
 
-Explicitly deferred: DHT, BEP 9 magnet metadata exchange, PEX, BT v2/hybrid,
-multi-file torrents, and GUI work. A full tit-for-tat choking and optimistic-
+Explicitly deferred: DHT and automatic discovery of the initial metadata Peer,
+PEX, BT v2/hybrid, multi-file torrents, and GUI work. A full tit-for-tat choking and optimistic-
 unchoke policy remains deferred; Tracker `stopped` cannot be guaranteed after
 an ungraceful kill or power loss. SMD mainnet, mainnet
 wallet recovery, distributed consensus, mature Sybil resistance, real pricing,
@@ -160,7 +169,7 @@ The lowest-risk continuation of the BT-compatibility strategy is:
 1. add tests with partial index availability and mixed external seeders;
 2. evaluate a production tit-for-tat/optimistic-unchoke policy without
    weakening the current FIFO aggregate limiter;
-3. then consider BEP 9 metadata exchange and DHT;
+3. then consider DHT-based metadata-Peer discovery and PEX;
 4. address multi-file v1 and BT v2/hybrid before building a GUI.
 
 For SMD, keep the v0.1 economic rules frozen until its threat model is reviewed.

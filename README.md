@@ -13,9 +13,9 @@ baseline, code map, invariants, next priorities, and release checklist.
 > Reconstruct first. Transfer only what's missing.  
 > 先重建，只传缺失。
 
-Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. Peer metadata exchange and DHT remain deferred, as do background scanning and GUI work.
+Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. ShardMeld 2.1 adds bounded BEP 10/BEP 9 metadata exchange with an explicitly supplied peer. Automatic metadata-peer discovery and DHT remain deferred, as do background scanning and GUI work.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、完整文件做种、本地索引按需重建做种、周期 Tracker 续报、Ctrl-C 优雅停种、最多四 Peer 并发上传、全局上传限速和 FIFO 块公平调度均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 72 项自动化测试通过，其中 48 项覆盖 BT/CDC（包含原有 37 项），24 项覆盖 SMD。2026-08-31 的 2.0 签名包曾从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标；当前硬化包另以最终签名二进制完成了同尺寸的 ShardMeld-to-ShardMeld 标准 BT 传输。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、指定 Peer 的 BEP 9 元数据交换、完整文件做种、本地索引按需重建做种、周期 Tracker 续报、Ctrl-C 优雅停种、最多四 Peer 并发上传、全局上传限速和 FIFO 块公平调度均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 75 项自动化测试通过，其中 51 项覆盖 BT/CDC，24 项覆盖 SMD。2026-08-31 的 2.0 签名包曾从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标；2.0 硬化包另以最终签名二进制完成了同尺寸的 ShardMeld-to-ShardMeld 标准 BT 传输。2.1 又从隔离在 loopback 的未修改 qBittorrent 5.0.5 取回并验证了 811 字节 BEP 9 元数据。DHT 自动发现仍未实现。
 
 ## Run the delivered macOS binary
 
@@ -128,8 +128,18 @@ all Piece SHA-1 hashes and the target SHA-256 pass. Tracker query strings are
 redacted from reports because private trackers commonly place credentials in
 announce URLs.
 
-Bind a standard v1 magnet to a trusted local metadata file and use its tracker
-parameters:
+Resolve a standard v1 magnet from either trusted local metadata or a directly
+specified BEP 10/BEP 9 metadata peer, then use its tracker parameters:
+
+```bash
+shardmeld bt-fetch-metadata \
+  --magnet 'magnet:?xt=urn:btih:...' \
+  --peer 127.0.0.1:45990 \
+  --json ./metadata-report.json
+```
+
+This diagnostic command performs only metadata exchange and verification. To
+continue into payload discovery and reconstruction, use `bt-fetch-magnet`:
 
 ```bash
 shardmeld bt-fetch-magnet \
@@ -141,9 +151,26 @@ shardmeld bt-fetch-magnet \
   --json ./magnet-fetch.json
 ```
 
+Or fetch the raw `info` dictionary from a known extension-capable peer:
+
+```bash
+shardmeld bt-fetch-magnet \
+  --magnet 'magnet:?xt=urn:btih:...&tr=...' \
+  --metadata-peer 127.0.0.1:45990 \
+  --descriptor ./target.meld \
+  --db ./index.db \
+  --out ./rebuilt.bin \
+  --json ./magnet-fetch.json
+```
+
 The metadata info hash must equal the magnet `btih`. Both 40-character hex and
-32-character base32 v1 hashes are accepted. This is a validated magnet entry
-path, not BEP 9 metadata exchange: the local `.torrent` file is still required.
+32-character base32 v1 hashes are accepted. BEP 9 metadata is requested in
+16 KiB pieces, limited to 4 MiB, reassembled, and SHA-1 verified before it is
+parsed or used. The metadata Peer must currently be supplied explicitly;
+Tracker/DHT discovery for that initial Peer remains deferred. Direct metadata
+exchange has been verified against an unchanged qBittorrent 5.0.5 process
+isolated on loopback. The subsequent payload transfer still uses the normal
+Tracker and multi-Peer engine.
 
 Seed a complete verified file to standard v1 clients:
 
@@ -310,6 +337,8 @@ The completed-event, Ctrl-C, concurrent-upload, and packaged transfer result is
 in `experiments/tracker-completed-concurrency-v20/README.md`.
 The periodic Tracker renewal and aggregate upload-limit result is in
 `experiments/seed-heartbeat-rate-limit-v20/README.md`.
+The packaged 2.1 BEP 9 exchange with unchanged qBittorrent 5.0.5 is in
+`experiments/qbittorrent-5.0.5-bep9-v21/README.md`.
 
 ## Copyright and license
 

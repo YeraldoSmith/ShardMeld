@@ -31,6 +31,7 @@ pub fn capabilities_report() -> CapabilitiesReport {
             "safe-piece-endgame".to_owned(),
             "standard-cancel".to_owned(),
             "magnet-v1-local-metadata-binding".to_owned(),
+            "direct-peer-bep9-metadata-exchange".to_owned(),
             "verified-file-upload-seeding".to_owned(),
             "on-demand-index-piece-seeding".to_owned(),
             "automatic-seed-tracker-start-stop".to_owned(),
@@ -53,7 +54,6 @@ pub fn capabilities_report() -> CapabilitiesReport {
         ],
         deferred: vec![
             "dht".to_owned(),
-            "magnet-metadata-exchange".to_owned(),
             "peer-exchange".to_owned(),
             "bittorrent-v2-hybrid".to_owned(),
             "multi-file-torrents".to_owned(),
@@ -68,6 +68,7 @@ pub fn capabilities_report() -> CapabilitiesReport {
         limits: vec![
             "explicitly-authorized-index-roots-only".to_owned(),
             "single-file-v1-torrents-only".to_owned(),
+            "bep9-metadata-peer-must-be-explicit".to_owned(),
             "piece-level-resume".to_owned(),
             "piece-level-endgame".to_owned(),
             "maximum-four-active-peers".to_owned(),

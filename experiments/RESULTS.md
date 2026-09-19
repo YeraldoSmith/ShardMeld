@@ -1,4 +1,4 @@
-# Prototype 0.1 through ShardMeld 2.0 measured results
+# Prototype 0.1 through ShardMeld 2.1 measured results
 
 Date: 2026-08-30  
 Machine phase: local synthetic fixture plus verified public real files  
@@ -454,19 +454,35 @@ The original suite includes:
 
 The first CDC implementation failed the shifted-file test at roughly 15.8% reuse because it retained old byte history with a rotate operation. The implementation was corrected to discard old high bits, after which the full suite and smoke flow passed. This is included as development evidence, not hidden as a successful first attempt.
 
+## ShardMeld 2.1: BEP 9 metadata exchange
+
+An unchanged qBittorrent 5.0.5 process was started with a disposable profile,
+bound only to `127.0.0.1:46019`, with DHT, PeX, and Local Peer Discovery
+disabled. ShardMeld performed the BEP 10 extension handshake, used the remote
+`ut_metadata` extension ID, fetched the 811-byte raw `info` dictionary, and
+verified its SHA-1 as
+`cbfe49f2c4d44a6a4823ebfa8c829351755d90bb`. The parsed name was `sqlite3.c`.
+The external process was stopped cleanly and the listener was confirmed closed.
+
+Automated coverage also reassembles a metadata value spanning two 16 KiB
+pieces and rejects metadata whose SHA-1 does not match the magnet. This proves
+direct, explicitly addressed BEP 9 interoperability; it does not prove DHT or
+automatic discovery of the initial metadata Peer.
+
 ## What this does not prove
 
 - No personal directory was scanned. The only real inputs were explicitly
   downloaded public SQLite release files.
 - The v0.2 network measurements used ShardMeld's minimal loopback research
   transport. The later v0.4-v0.6 experiments separately used qBittorrent and
-  loopback trackers; none used DHT, magnet exchange, or public swarms.
+  loopback trackers; the v2.1 experiment adds direct BEP 9 exchange with
+  qBittorrent. None used DHT or public swarms.
 - The v0.3 test proves standard v1 metainfo parsing and piece-hash compatibility,
   v0.4 proves direct interoperability with qBittorrent 5.0.5, and v0.5 proves
   HTTP tracker discovery plus sequential peer fallback, while v0.6 proves UDP
   tracker discovery and multitracker tier fallback.
-- DHT discovery and magnet metadata exchange are still not implemented.
-  Endgame is Piece-level rather than block-level. Upload is loopback-first and
+- DHT and automatic discovery of the initial metadata Peer are still not
+  implemented. Endgame is Piece-level rather than block-level. Upload is loopback-first and
   lacks production tit-for-tat choking, public-swarm validation, and NAT
   traversal.
 - `missing_payload` excludes future protocol overhead and retries.
@@ -479,6 +495,6 @@ The first CDC implementation failed the shifted-file test at roughly 15.8% reuse
 ## Delivered binary
 
 - Platform: macOS Apple Silicon (`arm64`).
-- Version: `shardmeld 2.0.0`.
+- Version: `shardmeld 2.1.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `d1d0ea4f19c989b3c65f29e734983d7fa2edbf3c7549b54c39d5cb3bb1dd74cd`.
+- SHA-256: `a28d5d3b0e4f084e425f4d31dcaa782b30926a94cafac81608d9c4fdb4f29b74`.

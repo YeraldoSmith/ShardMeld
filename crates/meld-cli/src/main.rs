@@ -6,13 +6,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use meld_core::{
     BtSeedOptions, ChunkProfile, IndexDb, bind_v1_magnet, capabilities_report, compare_descriptor,
-    create_descriptor, fetch_missing_chunks, fetch_v1_from_peer, fetch_v1_via_tracker,
-    load_descriptor, load_v1_torrent, parse_v1_magnet, plan_v1_bridge, rebuild_target,
-    save_descriptor, serve_chunk_directory, serve_v1_file_until_shutdown_with_options,
-    serve_v1_index_until_shutdown_with_options, stage_missing_chunks, verify_target,
+    create_descriptor, fetch_missing_chunks, fetch_v1_from_peer, fetch_v1_metadata_from_peer,
+    fetch_v1_via_tracker, load_descriptor, load_v1_torrent, parse_v1_magnet, plan_v1_bridge,
+    rebuild_target, save_descriptor, serve_chunk_directory,
+    serve_v1_file_until_shutdown_with_options, serve_v1_index_until_shutdown_with_options,
+    stage_missing_chunks, verify_target,
 };
 use serde::Serialize;
 use smd_core::{
@@ -118,13 +119,30 @@ enum Command {
         #[arg(long)]
         json: Option<PathBuf>,
     },
-    /// Bind a v1 magnet to trusted local .torrent metadata, then discover and fetch.
+    /// Fetch and verify a v1 magnet's BEP 9 metadata from a known peer.
+    BtFetchMetadata {
+        #[arg(long)]
+        magnet: String,
+        #[arg(long)]
+        peer: SocketAddr,
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
+    /// Resolve a v1 magnet through local metadata or BEP 9, then discover and fetch.
+    #[command(group(
+        ArgGroup::new("metadata_source")
+            .required(true)
+            .args(["metadata", "metadata_peer"])
+    ))]
     BtFetchMagnet {
         #[arg(long)]
         magnet: String,
         /// Local v1 .torrent metadata whose info hash must match the magnet.
         #[arg(long)]
-        metadata: PathBuf,
+        metadata: Option<PathBuf>,
+        /// Direct peer used for BEP 10/BEP 9 metadata exchange.
+        #[arg(long)]
+        metadata_peer: Option<SocketAddr>,
         #[arg(long)]
         descriptor: PathBuf,
         #[arg(long)]
@@ -647,9 +665,24 @@ fn main() -> Result<()> {
                 report.verified
             );
         }
+        Command::BtFetchMetadata { magnet, peer, json } => {
+            let magnet = parse_v1_magnet(&magnet)?;
+            let (torrent, report) = fetch_v1_metadata_from_peer(&magnet, peer)?;
+            save_report(&report, json.as_deref())?;
+            println!(
+                "metadata_peer={} metadata={} metadata_bytes={} metadata_pieces={} info_hash={} verified={}",
+                report.peer,
+                torrent.name,
+                report.metadata_bytes,
+                report.metadata_pieces,
+                report.info_hash_sha1,
+                report.info_hash_verified
+            );
+        }
         Command::BtFetchMagnet {
             magnet,
             metadata,
+            metadata_peer,
             descriptor,
             db,
             tracker,
@@ -658,11 +691,18 @@ fn main() -> Result<()> {
             json,
         } => {
             let magnet = parse_v1_magnet(&magnet)?;
-            let metadata = load_v1_torrent(&metadata)?;
-            let torrent = bind_v1_magnet(&magnet, &metadata)?;
+            let (torrent, metadata_exchange) = if let Some(metadata) = metadata {
+                let metadata = load_v1_torrent(&metadata)?;
+                (bind_v1_magnet(&magnet, &metadata)?, None)
+            } else {
+                let peer =
+                    metadata_peer.context("--metadata-peer is required without --metadata")?;
+                let (torrent, exchange) = fetch_v1_metadata_from_peer(&magnet, peer)?;
+                (torrent, Some(exchange))
+            };
             let descriptor = load_descriptor(&descriptor)?;
             let index = IndexDb::open(&db)?;
-            let report = fetch_v1_via_tracker(
+            let mut report = fetch_v1_via_tracker(
                 &torrent,
                 &descriptor,
                 &index,
@@ -670,6 +710,7 @@ fn main() -> Result<()> {
                 announce_port,
                 &out,
             )?;
+            report.metadata_exchange = metadata_exchange;
             save_report(&report, json.as_deref())?;
             let lifecycle_failures = report
                 .tracker_lifecycle
@@ -677,9 +718,10 @@ fn main() -> Result<()> {
                 .filter(|attempt| !attempt.success)
                 .count();
             println!(
-                "magnet_info_hash={} metadata={} peers_connected={} contributors={} network_payload={} tracker_events={} tracker_event_failures={} sha256={} verified={}",
+                "magnet_info_hash={} metadata={} metadata_exchange={} peers_connected={} contributors={} network_payload={} tracker_events={} tracker_event_failures={} sha256={} verified={}",
                 magnet.info_hash_sha1,
                 torrent.name,
+                report.metadata_exchange.is_some(),
                 report.transfer.peers_connected,
                 report.transfer.contributing_peers.len(),
                 report.transfer.network_payload_bytes,

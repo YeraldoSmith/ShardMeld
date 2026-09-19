@@ -1,4 +1,5 @@
 mod bittorrent;
+mod bt_metadata;
 mod bt_peer;
 mod bt_seed;
 mod bt_tracker;
@@ -16,6 +17,7 @@ pub use bittorrent::{
     BtBridgeReport, BtPiecePlan, TorrentV1, TrackerResponse, load_v1_torrent,
     parse_tracker_response, plan_v1_bridge,
 };
+pub use bt_metadata::{BtMetadataFetchReport, fetch_v1_metadata_from_peer};
 pub use bt_peer::{BtPeerFetchReport, fetch_v1_from_peer};
 pub use bt_seed::{
     BtIndexSeedReport, BtSeedOptions, BtSeedReport, serve_v1_file, serve_v1_file_listener,
