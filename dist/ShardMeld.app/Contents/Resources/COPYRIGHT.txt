@@ -1,0 +1,6 @@
+Copyright (C) 2026 YeraldoSmith
+
+ShardMeld is free software licensed under the GNU Affero General Public
+License version 3 only. See LICENSE for the complete license terms.
+
+SPDX-License-Identifier: AGPL-3.0-only

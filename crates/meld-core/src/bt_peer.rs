@@ -958,7 +958,7 @@ pub(crate) fn generate_peer_id() -> Result<[u8; 20]> {
         .as_nanos();
     let seed = format!("{}:{now}", std::process::id());
     let suffix = hex::encode(Sha1::digest(seed.as_bytes()));
-    let text = format!("-SM2100-{}", &suffix[..12]);
+    let text = format!("-SM2200-{}", &suffix[..12]);
     let mut peer_id = [0_u8; 20];
     peer_id.copy_from_slice(text.as_bytes());
     Ok(peer_id)

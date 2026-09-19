@@ -1,4 +1,4 @@
-# Prototype 0.1 through ShardMeld 2.1 measured results
+# Prototype 0.1 through ShardMeld 2.2 measured results
 
 Date: 2026-08-30  
 Machine phase: local synthetic fixture plus verified public real files  
@@ -469,6 +469,19 @@ pieces and rejects metadata whose SHA-1 does not match the magnet. This proves
 direct, explicitly addressed BEP 9 interoperability; it does not prove DHT or
 automatic discovery of the initial metadata Peer.
 
+## ShardMeld 2.2: native macOS desktop path
+
+The exact final ad-hoc-signed `dist/ShardMeld.app` was launched after packaging.
+Through the visible native UI it indexed the 16,777,216-byte smoke material,
+described the 16,842,753-byte target, and displayed 16,361,172 locally reusable
+bytes across 192 of 198 chunks (97.1%), leaving 481,581 bytes for the network.
+The final ZIP was extracted separately; the extracted app's deep code signature
+and bundled `shardmeld 2.2.0` engine both verified.
+
+This proves the packaged local-analysis workflow and presentation. It does not
+repeat the external qBittorrent runs, validate a public swarm, cover every UI
+error path, or provide Apple notarization.
+
 ## What this does not prove
 
 - No personal directory was scanned. The only real inputs were explicitly
@@ -476,7 +489,8 @@ automatic discovery of the initial metadata Peer.
 - The v0.2 network measurements used ShardMeld's minimal loopback research
   transport. The later v0.4-v0.6 experiments separately used qBittorrent and
   loopback trackers; the v2.1 experiment adds direct BEP 9 exchange with
-  qBittorrent. None used DHT or public swarms.
+  qBittorrent. The v2.2 UI experiment exercises local analysis only. None used
+  DHT or public swarms.
 - The v0.3 test proves standard v1 metainfo parsing and piece-hash compatibility,
   v0.4 proves direct interoperability with qBittorrent 5.0.5, and v0.5 proves
   HTTP tracker discovery plus sequential peer fallback, while v0.6 proves UDP
@@ -495,6 +509,7 @@ automatic discovery of the initial metadata Peer.
 ## Delivered binary
 
 - Platform: macOS Apple Silicon (`arm64`).
-- Version: `shardmeld 2.1.0`.
+- Version: `shardmeld 2.2.0`.
 - Ad-hoc signed: yes.
-- SHA-256: `a28d5d3b0e4f084e425f4d31dcaa782b30926a94cafac81608d9c4fdb4f29b74`.
+- CLI SHA-256: `512d54a94a82f497bcff50f3e348a88a311be4b4d54b2c57270815079ade8917`.
+- Desktop ZIP SHA-256: `b81d6cf623c9590bfd9ace4601a41c959ad9651cdaf6009ad917b435f81ae2dc`.

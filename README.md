@@ -13,9 +13,27 @@ baseline, code map, invariants, next priorities, and release checklist.
 > Reconstruct first. Transfer only what's missing.  
 > 先重建，只传缺失。
 
-Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. ShardMeld 2.1 adds bounded BEP 10/BEP 9 metadata exchange with an explicitly supplied peer. Automatic metadata-peer discovery and DHT remain deferred, as do background scanning and GUI work.
+Prototype 0.1 through 0.10 build the verified reconstruction and BitTorrent download engine. ShardMeld 1.0 freezes the first machine-readable report contract, 1.1 adds validated v1 magnet entry with trusted local metadata, and 1.2 adds verified full-file upload seeding. ShardMeld 2.0 can advertise and serve standard v1 Pieces reconstructed on demand from the authorized CDC index, without requiring a complete target file in that index. ShardMeld 2.1 adds bounded BEP 10/BEP 9 metadata exchange with an explicitly supplied peer. ShardMeld 2.2 adds a native macOS desktop app for local-reuse analysis and descriptor-driven BitTorrent receive flows. Automatic metadata-peer discovery, DHT, background scanning, and SMD economy UI remain deferred.
 
-当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、指定 Peer 的 BEP 9 元数据交换、完整文件做种、本地索引按需重建做种、周期 Tracker 续报、Ctrl-C 优雅停种、最多四 Peer 并发上传、全局上传限速和 FIFO 块公平调度均已实现。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 75 项自动化测试通过，其中 51 项覆盖 BT/CDC，24 项覆盖 SMD。2026-08-31 的 2.0 签名包曾从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标；2.0 硬化包另以最终签名二进制完成了同尺寸的 ShardMeld-to-ShardMeld 标准 BT 传输。2.1 又从隔离在 loopback 的未修改 qBittorrent 5.0.5 取回并验证了 811 字节 BEP 9 元数据。DHT 自动发现仍未实现。
+当前交付状态：离线重建、v1 BT Piece 映射、Tracker、多 Peer、断点续传、稀有 Piece 优先、安全 Endgame、v1 magnet 本地元数据绑定、指定 Peer 的 BEP 9 元数据交换、完整文件做种、本地索引按需重建做种、周期 Tracker 续报、Ctrl-C 优雅停种、最多四 Peer 并发上传、全局上传限速和 FIFO 块公平调度均已实现。2.2 新增原生 macOS 客户端，可完成本地复用分析，以及基于 `.meld` 的 Torrent/Magnet 接收流程。独立的 SMD v0.1 Devnet 经济层也已实现。当前共 75 项 Rust 自动化测试通过，其中 51 项覆盖 BT/CDC，24 项覆盖 SMD。2026-08-31 的 2.0 签名包曾从 136 个分散材料文件对应的索引动态发布 37 个标准 BT Pieces，让未修改的 qBittorrent 5.0.5 下载出逐字节一致的 9,515,341 字节目标；2.0 硬化包另以最终签名二进制完成了同尺寸的 ShardMeld-to-ShardMeld 标准 BT 传输。2.1 又从隔离在 loopback 的未修改 qBittorrent 5.0.5 取回并验证了 811 字节 BEP 9 元数据。DHT 自动发现仍未实现。
+
+## Run the macOS desktop app
+
+On Apple Silicon macOS, double-click `dist/ShardMeld.app` or run:
+
+```bash
+open dist/ShardMeld.app
+```
+
+For transfer or a fresh checkout, use
+`dist/ShardMeld-2.2.0-macos-arm64.zip`; its SHA-256 is recorded in
+`dist/SHA256SUMS` alongside the standalone CLI engine.
+
+The app bundles the signed command-line engine and exposes two deliberately
+bounded workflows: analyze how much of a target can be reconstructed from one
+explicitly authorized folder, and receive a single-file BitTorrent v1 target
+using its `.meld` descriptor. The app does not scan in the background. Build
+and ad-hoc sign it locally with `./scripts/build-macos-app.sh`.
 
 ## Run the delivered macOS binary
 

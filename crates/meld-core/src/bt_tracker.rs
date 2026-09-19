@@ -702,7 +702,7 @@ fn announce_http(
         .new_agent();
     let mut response = agent
         .get(&url)
-        .header("User-Agent", "ShardMeld/2.1.0")
+        .header("User-Agent", "ShardMeld/2.2.0")
         .call()
         .with_context(|| format!("HTTP tracker request {}", redact_tracker_url(tracker)))?;
     let body = response
@@ -945,7 +945,7 @@ mod tests {
     #[test]
     fn tier_shuffle_is_deterministic_for_one_session() {
         let tier = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        let peer_id = *b"-SM2100-123456789012";
+        let peer_id = *b"-SM2200-123456789012";
         assert_eq!(
             shuffled_tier(tier.clone(), &peer_id, 0),
             shuffled_tier(tier, &peer_id, 0)

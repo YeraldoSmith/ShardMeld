@@ -6,7 +6,7 @@ repository. The canonical repository is
 
 ## Current verified baseline
 
-- Product version: `2.1.0`.
+- Product version: `2.2.0`.
 - Stable machine-readable envelope: `shardmeld-report`, version `1`.
 - Automated verification: 75 tests. The BT/CDC suite has 51 tests, including
   the original 37; SMD adds 24 unit, invariant, persistence, and real
@@ -19,7 +19,9 @@ repository. The canonical repository is
   dependencies. This is a tested toolchain, not a declared minimum supported
   Rust version.
 - Delivered binary: ad-hoc-signed macOS Apple Silicon executable in `dist/`,
-  SHA-256 `a28d5d3b0e4f084e425f4d31dcaa782b30926a94cafac81608d9c4fdb4f29b74`.
+  SHA-256 `512d54a94a82f497bcff50f3e348a88a311be4b4d54b2c57270815079ade8917`.
+- Delivered desktop archive: `dist/ShardMeld-2.2.0-macos-arm64.zip`, SHA-256
+  `b81d6cf623c9590bfd9ace4601a41c959ad9651cdaf6009ad917b435f81ae2dc`.
 - External interoperability baseline (2026-08-31): unchanged qBittorrent
   `5.0.5` downloaded a 9,515,341-byte target from a packaged ShardMeld 2.0
   index seed; all 37 Pieces and the final SHA-256 verified. The current
@@ -29,6 +31,11 @@ repository. The canonical repository is
 - BEP 9 interoperability (2026-09-19): ShardMeld 2.1 fetched the 811-byte raw
   `info` dictionary for the SQLite fixture from an unchanged qBittorrent 5.0.5
   process isolated on loopback, then verified the expected v1 info hash.
+- Native macOS UI acceptance (2026-09-19): the exact ad-hoc-signed
+  `dist/ShardMeld.app` indexed the 16,777,216-byte smoke material, described a
+  16,842,753-byte target, and displayed the engine's measured 97.1% local
+  reuse result (16,361,172 reusable bytes). This validates the packaged local
+  analysis path, not public-swarm performance or notarization.
 
 Run this immediately after cloning:
 
@@ -75,6 +82,9 @@ The Rust source is the canonical implementation; rebuild it for other targets.
 - `crates/smd-core/tests/devnet.rs` — economic rules, atomic rollback,
   persistence, cap, and named invariant tests.
 - `crates/meld-cli/tests/smd_cli.rs` — full CLI-process economy flow.
+- `apps/macos/` — native SwiftUI desktop app and engine-process integration.
+- `scripts/build-macos-app.sh` — reproducible Apple Silicon `.app` packaging,
+  icon generation, bundled-engine assembly, and ad-hoc signing.
 - `docs/SMD_PROTOCOL_DRAFT.md` — implementation-matched devnet protocol and
   security boundary. It must retain the non-mainnet/non-real-money warning.
 - `experiments/RESULTS.md` — measured history and evidence boundaries.
@@ -93,7 +103,7 @@ indexes, partial files, and local build state are ignored.
 
 ## Shipped scope
 
-The authoritative list is produced by `shardmeld capabilities`. ShardMeld 2.1
+The authoritative list is produced by `shardmeld capabilities`. ShardMeld 2.2
 currently implements:
 
 - explicitly authorized CDC indexing and exact SHA-256 reconstruction;
@@ -122,9 +132,11 @@ currently implements:
 - guaranteed free-lane and disabled-pricing interfaces.
 - native macOS Keychain-backed devnet wallets with a separate explicit test-file path;
 - deterministic invariant-checked ledger audit roots.
+- native macOS local-reuse analysis and descriptor-driven Torrent/Magnet receive UI.
 
 Explicitly deferred: DHT and automatic discovery of the initial metadata Peer,
-PEX, BT v2/hybrid, multi-file torrents, and GUI work. A full tit-for-tat choking and optimistic-
+PEX, BT v2/hybrid, multi-file torrents, background scanning, and an SMD economy
+GUI. A full tit-for-tat choking and optimistic-
 unchoke policy remains deferred; Tracker `stopped` cannot be guaranteed after
 an ungraceful kill or power loss. SMD mainnet, mainnet
 wallet recovery, distributed consensus, mature Sybil resistance, real pricing,
@@ -170,7 +182,7 @@ The lowest-risk continuation of the BT-compatibility strategy is:
 2. evaluate a production tit-for-tat/optimistic-unchoke policy without
    weakening the current FIFO aggregate limiter;
 3. then consider DHT-based metadata-Peer discovery and PEX;
-4. address multi-file v1 and BT v2/hybrid before building a GUI.
+4. address multi-file v1 and BT v2/hybrid before expanding the desktop receive UI.
 
 For SMD, keep the v0.1 economic rules frozen until its threat model is reviewed.
 The next safe work is stronger receipt audit/diversity research and optional
@@ -195,6 +207,8 @@ client run both pass.
    what the run does and does not prove.
 9. Sanitize local paths, run a credential scan, and ensure no tracked file
    exceeds GitHub's size limit.
+10. Rebuild `dist/ShardMeld.app`, verify its deep ad-hoc signature, launch that
+    exact package, and complete a real reuse-analysis smoke through the UI.
 
 ## License and ownership
 

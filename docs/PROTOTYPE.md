@@ -1,4 +1,4 @@
-# Prototype 0.1 through ShardMeld 2.1
+# Prototype 0.1 through ShardMeld 2.2
 
 ## Scope
 
@@ -44,6 +44,12 @@ ShardMeld 2.1 implements the BEP 10 extension handshake and bounded BEP 9
 requested in 16 KiB pieces, limited to 4 MiB, reassembled, and accepted only
 when its SHA-1 equals the magnet `btih`. Automatic discovery of the initial
 metadata Peer through DHT or another mechanism remains deferred.
+
+ShardMeld 2.2 adds an Apple Silicon native macOS application. It drives the
+same bundled engine for explicit-folder reuse analysis and descriptor-driven
+single-file v1 Torrent or Magnet receiving. It stores recent result summaries
+locally, does not perform background scanning, and does not expose the SMD
+economy layer.
 
 ## Metrics
 

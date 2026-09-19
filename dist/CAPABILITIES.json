@@ -1,7 +1,7 @@
 {
   "report_format": "shardmeld-report",
   "report_version": 1,
-  "engine_version": "2.1.0",
+  "engine_version": "2.2.0",
   "implemented": [
     "authorized-local-cdc-index",
     "exact-sha256-reconstruction",
@@ -34,14 +34,14 @@
     "smd-v0.1-decreasing-emission",
     "smd-v0.1-free-lane",
     "smd-macos-keychain-wallets",
-    "smd-ledger-state-audit"
+    "smd-ledger-state-audit",
+    "native-macos-analysis-and-receive-ui"
   ],
   "deferred": [
     "dht",
     "peer-exchange",
     "bittorrent-v2-hybrid",
     "multi-file-torrents",
-    "gui",
     "smd-mainnet",
     "smd-mainnet-wallet-recovery",
     "smd-distributed-consensus",
@@ -59,6 +59,8 @@
     "fixed-four-active-upload-peers",
     "fifo-block-fairness-without-tit-for-tat-choking",
     "tracker-stopped-not-guaranteed-after-forced-termination",
+    "macos-apple-silicon-desktop-package-only",
+    "desktop-receive-requires-meld-descriptor",
     "smd-devnet-only",
     "smd-devnet-authority-ordering",
     "smd-explicit-test-wallet-files-contain-private-keys",
